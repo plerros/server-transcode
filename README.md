@@ -4,6 +4,7 @@ Server application to transcode files and compress folders.
 
 1. Run on your server
 ```
+echo [IP] > ip.txt
 ./prepare.sh
 ./python3 transcode.py
 ```
