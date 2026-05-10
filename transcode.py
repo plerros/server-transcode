@@ -178,6 +178,7 @@ class to_avif(MultiDim_Problem):
 		self.tmp_avif     = tmpdir / (infile.with_suffix(".avif").name)
 		self.tmp_avif_txt = self.tmp_avif.with_suffix(".avif.txt")
 
+		self.outdir       = outdir
 		self.out_fail     = outdir / infile.name
 		self.out_avif     = outdir / (infile.with_suffix(".avif").name)
 		self.out_avif_txt = self.out_avif.with_suffix(".avif.txt")
@@ -253,6 +254,7 @@ class to_avif(MultiDim_Problem):
 		else:
 			print("best not found")
 			print_run(["mv", self.infile, self.out_fail])
+			print_run(["mv", self.tmp_avif_txt, self.out_avif_txt])
 
 class Transcode:
 	def __init__(self):
@@ -312,6 +314,7 @@ class JPEG(Transcode):
 	def destination_empty(self):
 		for i in to_avif(self.path, Path(self.temp_out.name), self.destination).outfiles():
 			if (i.is_file()):
+				print("Already exists:", i)
 				return False
 		return True
 	def process_internal(self):
