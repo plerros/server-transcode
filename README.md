@@ -21,3 +21,5 @@ sudo mount [IP]:/exports/out out
 4. `mv` files (for transcode) to */in/media/*
 5. `mv` folders (for compression) to *in/folder/*
 6. pick up the results from *out/*
+
+If you're transcoding high quality PNG images, set their extension to: *.png_hq*

@@ -23,9 +23,6 @@ def print_run(data):
 
 TMPOUT_EXT = ".tmp.avif"
 
-PSNR_min    = 53
-PSNR_target = 54
-
 Q_min = 0
 Q_max = 100
 
@@ -49,11 +46,13 @@ def grep(pattern: re.Pattern, string: str):
 
 	return result[0];
 
-class Image:
-	def __init__(self, src: Path, yuv: int, q: int):
+class Avifencode:
+	def __init__(self, src: Path, yuv: int, q: int, psnr_min: int, psnr_target: int):
 		self.src = src
 		self.yuv = yuv
 		self.q   = q
+		self.psnr_min    = psnr_min
+		self.psnr_target = psnr_target
 
 		tmp = src.with_suffix(TMPOUT_EXT)
 		if (tmp.is_file()):
@@ -85,14 +84,20 @@ class Image:
 		tmp_re    = grep(r'min:.* max'    , tmp_re)
 		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
 		self.psnr = float(tmp_re)
-		self.y    = self.psnr - PSNR_target
+		self.y    = self.psnr - self.psnr_target
 		self.outBytes = read_binary_file(tmp)
 		if (self.is_bigger()):
 			self.y = float("+inf")
 		tmp.unlink()
 
 	def is_bigger(self):
-		return (len(self.outBytes) > self.src.stat().st_size)
+		return (len(self.outBytes) >= self.src.stat().st_size)
+
+	def is_worse(self):
+		if (self.is_bigger()):
+			return True
+		
+		return (self.psnr < self.psnr_min)
 
 class Parameter:
 	def __init__(self, name, values):
@@ -167,8 +172,10 @@ class MultiDim_Problem:
 			self.solveRecursive(current_param_id + 1)
 
 class to_avif(MultiDim_Problem):
-	def __init__(self, infile: Path, tmpdir: Path, outdir: Path):
-		self.parameters =  []
+	def __init__(self, infile: Path, tmpdir: Path, outdir: Path, parameters):
+		self.parameters = []
+		for i in parameters:
+			self.parameters += [i]
 		self.parameters += [Parameter("yuv", [444, 422, 420])]
 		self.axis =  []
 		self.axis += [Axis("q", 0, 100)]
@@ -211,14 +218,20 @@ class to_avif(MultiDim_Problem):
 
 		# Setup current parameters
 		quality = int(q)
-		yuv = 444
+		yuv         = 444
+		psnr_min    = 53
+		psnr_target = 54
 		for i in self.parameters:
 			if (i.name == "yuv"):
 				yuv = i.value
+			if (i.name == "PSNR_MIN"):
+				psnr_min = i.value
+			if (i.name == "PSNR_TARGET"):
+				psnr_target = i.value
 
 		# Run
 		append_line(self.tmp_avif_txt, "doing: "+str(quality))
-		self.cache[identifier] = Image(self.infile, yuv, quality)
+		self.cache[identifier] = Avifencode(self.infile, yuv, quality, psnr_min, psnr_target)
 		append_line(self.tmp_avif_txt, "done")
 
 		# Check filesize
@@ -233,10 +246,7 @@ class to_avif(MultiDim_Problem):
 		filtered = []
 		for i in self.cache:
 			j = self.cache[i]
-			if (j.is_bigger()):
-				continue
-
-			if (j.psnr < PSNR_min):
+			if (j.is_worse()):
 				continue
 
 			if (not best):
@@ -244,6 +254,7 @@ class to_avif(MultiDim_Problem):
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
 
+		print_run(["mkdir", "-p", self.outdir])
 		if (best):
 			if (self.tmp_avif.is_file()):
 				self.tmp_avif.unlink()
@@ -265,14 +276,18 @@ class Transcode:
 		self.temp_out    = tempfile.TemporaryDirectory()
 	def set(self, path: Path, destination: Path):
 		#check if exists
+		if (not (path.is_file() or path.is_dir())):
+			return False
 		self.path = Path(self.temp_in.name) / path.name
 		self.destination = destination
+		self.parameters  = []
 
 		if (not self.compatible_suffix()):
 			return False
 		if (not self.destination_empty()):
 			return False
 		print_run(["mv", path, self.temp_in.name])
+		self.parameters_init()
 		self.initialized = True
 		return True
 	def compatible_suffix(self):
@@ -280,6 +295,8 @@ class Transcode:
 	def destination_empty(self):
 		raise NotImplementedError()
 	def process_internal(self):
+		raise NotImplementedError()
+	def parameters_init(self):
 		raise NotImplementedError()
 	def process(self):
 		if (self.initialized):
@@ -294,32 +311,42 @@ class Folder(Transcode):
 		product = Path(self.temp_out.name) / (self.path.with_suffix(".7z").name)
 		print_run(["7za", "a", "-t7z", "-m0=lzma2", "-mx=9", "-mfb=273", "-md=29", "-ms=8g", "-mmt=off", "-mmtf=off", "-mqs=on", "-bt", "-bb3", product, self.path])
 		print_run(["mv", product, self.destination])
+	def parameters_init(self):
+		return
 
-class PNG(Transcode):
+class Image(Transcode):
+	def parameters_init(self):
+		self.parameters = []
+		self.parameters += [Parameter("PSNR_MIN",    [44])]
+		self.parameters += [Parameter("PSNR_TARGET", [45])]
+	def destination_empty(self):
+		for i in to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).outfiles():
+			if (i.is_file()):
+				print("Already exists:", i)
+				return False
+		return True
+
+class PNG(Image):
 	def compatible_suffix(self):
 		return (self.path.suffix in {".png", ".PNG"})
-	def destination_empty(self):
-		for i in to_avif(self.path, Path(self.temp_out.name), self.destination).outfiles():
-			if (i.is_file()):
-				print("Already exists:", i)
-				return False
-		return True
 	def process_internal(self):
 		print_run(["optipng", "-o7", self.path])
-		to_avif(self.path, Path(self.temp_out.name), self.destination).solve()
+		to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).solve()
 
-class JPEG(Transcode):
+class PNG_HQ(PNG):
+	def compatible_suffix(self):
+		return (self.path.suffix in {".png_hq"})
+	def parameters_init(self):
+		self.parameters = []
+		self.parameters += [Parameter("PSNR_MIN",    [53])]
+		self.parameters += [Parameter("PSNR_TARGET", [54])]
+
+class JPEG(Image):
 	def compatible_suffix(self):
 		return (self.path.suffix in {".jpg", ".JPG", ".jpeg", ".JPEG"})
-	def destination_empty(self):
-		for i in to_avif(self.path, Path(self.temp_out.name), self.destination).outfiles():
-			if (i.is_file()):
-				print("Already exists:", i)
-				return False
-		return True
 	def process_internal(self):
 		print_run(["jpegoptim", self.path])
-		to_avif(self.path, Path(self.temp_out.name), self.destination).solve()
+		to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).solve()
 
 def multiplexer(lock_media, lock_folder):
 	while (True):
@@ -330,21 +357,27 @@ def multiplexer(lock_media, lock_folder):
 				folder.set(folders[0], OUT_FOLDER)
 		folder.process()
 
-		jpeg = JPEG()
-		png  = PNG()
+		jpeg   = JPEG()
+		png    = PNG()
+		png_hq = PNG_HQ()
 		with lock_media:
 			medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
 			for i in medias:
 				destination_path = Path("out") / i.suffix
 				destination_path = destination_path / i.parent.relative_to(IN_MEDIA) # preserve user's folder structure
+
 				is_any = False
-				is_any |= jpeg.set(i, destination_path)
-				is_any |=  png.set(i, destination_path)
+				is_any |= jpeg.set(  i, destination_path)
+				is_any |= png.set(   i, destination_path)
+				is_any |= png_hq.set(i, destination_path)
+
 				if (is_any):
-					print_run(["mkdir", "-p", destination_path])
 					break
+
 		jpeg.process()
 		png.process()
+		png_hq.process()
+		webp.process()
 
 if __name__ == "__main__":
 	if (THREADS == 0):

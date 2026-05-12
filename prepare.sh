@@ -6,6 +6,7 @@ mkdir out
 mkdir out/folder
 mkdir out/.jpg
 mkdir out/.png
+mkdir out/.png_hq
 
 sudo mkdir /exports
 sudo chown "$(whoami):$(whoami)" /exports
