@@ -17,10 +17,10 @@ sudo mount --bind in  /exports/in
 sudo mount --bind out /exports/out
 
 line="/exports/in  $(cat ip.txt)/24(rw,sync,no_subtree_check)"
-grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee /etc/exports
+grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee -a /etc/exports
 
 line="/exports/out $(cat ip.txt)/24(rw,sync,no_subtree_check)"
-grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee /etc/exports
+grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee -a /etc/exports
 
 sudo exportfs -a
 sudo systemctl restart nfs-kernel-server
