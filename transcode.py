@@ -58,6 +58,13 @@ class Avifencode:
 		if (tmp.is_file()):
 			tmp.unlink()
 
+		self.enc_src = src
+		print(self.src.suffix)
+		if (self.src.suffix == ".webp"):
+			self.enc_src = self.src.with_suffix(".png")
+			print_run(["magick", "convert", self.src, self.enc_src])
+
+
 		#magick -quality $q_now "$infile" "$tmpfile"
 
 		# cicp CP/TC/MC
@@ -77,9 +84,9 @@ class Avifencode:
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
 		#avifenc -j 8 --yuv $yuv_now -q $q_now --cicp 1/13/0 --speed 0 --codec aom "$infile" "$tmpfile"
-		print_run(["avifenc", "-j", "8", "--yuv", self.yuv, "-q", self.q, "--speed", "0", "--codec", "aom", self.src, tmp])
+		print_run(["avifenc", "-j", "8", "--yuv", self.yuv, "-q", self.q, "--speed", "0", "--codec", "aom", self.enc_src, tmp])
 
-		psnr_out  = subprocess.run(["ffmpeg", "-i", tmp, "-i", self.src, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf‑8')
+		psnr_out  = subprocess.run(["ffmpeg", "-i", tmp, "-i", self.enc_src, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf‑8')
 		tmp_re    = grep(r'PSNR.*'        , psnr_out)
 		tmp_re    = grep(r'min:.* max'    , tmp_re)
 		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
@@ -346,6 +353,12 @@ class JPEG(Image):
 		print_run(["jpegoptim", self.path])
 		to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).solve()
 
+class WEBP(Image):
+	def compatible_suffix(self):
+		return (self.path.suffix in {".webp", ".WEBP"})
+	def process_internal(self):
+		to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).solve()
+
 def multiplexer(lock_media, lock_folder):
 	while (True):
 		folder = Folder()
@@ -358,6 +371,7 @@ def multiplexer(lock_media, lock_folder):
 		jpeg   = JPEG()
 		png    = PNG()
 		png_hq = PNG_HQ()
+		webp   = WEBP()
 		with lock_media:
 			medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
 			for i in medias:
@@ -368,6 +382,7 @@ def multiplexer(lock_media, lock_folder):
 				is_any |= jpeg.set(  i, destination_path)
 				is_any |= png.set(   i, destination_path)
 				is_any |= png_hq.set(i, destination_path)
+				is_any |= webp.set(  i, destination_path)
 
 				if (is_any):
 					break
