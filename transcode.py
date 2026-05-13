@@ -2,14 +2,13 @@
 
 import math
 import multiprocessing
+import os
 from   pathlib import Path
 import re
 from   scipy.optimize import root_scalar
 import subprocess
 import tempfile
 import time
-
-THREADS = 1
 
 IN_FOLDER = Path("in/folder")
 IN_MEDIA  = Path("in/media")
@@ -394,11 +393,9 @@ def multiplexer(lock_media, lock_folder):
 		time.sleep(10)
 
 if __name__ == "__main__":
-	if (THREADS == 0):
-		exit();
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
-	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(THREADS)]
+	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
 	for p in processes:
 		p.start()
 	for p in processes:
