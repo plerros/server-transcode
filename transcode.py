@@ -301,8 +301,6 @@ class Transcode:
 	def process(self):
 		if (self.initialized):
 			self.process_internal()
-		else:
-			time.sleep(10)
 		self.temp_in.cleanup()
 		self.temp_out.cleanup()
 
@@ -378,6 +376,7 @@ def multiplexer(lock_media, lock_folder):
 		png.process()
 		png_hq.process()
 		webp.process()
+		time.sleep(10)
 
 if __name__ == "__main__":
 	if (THREADS == 0):
