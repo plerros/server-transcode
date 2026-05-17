@@ -7,11 +7,13 @@ mkdir out
 sudo mkdir /exports
 sudo chown "$(whoami):$(whoami)" /exports
 
-mkdir /exports/in
-mkdir /exports/out
+rmdir /exports/in
+rmdir /exports/out
+rm /exports/in
+rm /exports/out
 
-sudo mount --bind in  /exports/in
-sudo mount --bind out /exports/out
+ln -s "$(pwd)/in"  /exports/in
+ln -s "$(pwd)/out" /exports/out
 
 line="/exports/in  $(cat ip.txt)/24(rw,sync,no_subtree_check)"
 grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee -a /etc/exports
