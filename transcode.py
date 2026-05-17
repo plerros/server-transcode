@@ -20,8 +20,6 @@ def print_run(data):
 	print(strings)
 	subprocess.run(strings)
 
-TMPOUT_EXT = ".tmp.avif"
-
 Q_min = 0
 Q_max = 100
 
@@ -53,7 +51,7 @@ class Avifencode:
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 
-		tmp = src.with_suffix(TMPOUT_EXT)
+		tmp = src.with_suffix(".tmp.avif")
 		if (tmp.is_file()):
 			tmp.unlink()
 
@@ -85,7 +83,15 @@ class Avifencode:
 		#avifenc -j 8 --yuv $yuv_now -q $q_now --cicp 1/13/0 --speed 0 --codec aom "$infile" "$tmpfile"
 		print_run(["avifenc", "-j", "8", "--yuv", self.yuv, "-q", self.q, "--speed", "0", "--codec", "aom", self.enc_src, tmp])
 
-		psnr_out  = subprocess.run(["ffmpeg", "-i", tmp, "-i", self.enc_src, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf‑8')
+		# Auto orient before running ffmpeg
+		cmp1 = self.enc_src.with_suffix(".cmp1.avif")
+		cmp2 = src.with_suffix(".cmp2.avif")
+		print_run(["cp", self.enc_src, cmp1])
+		print_run(["cp", tmp, cmp2])
+		print_run(["magick", "mogrify", "-auto-orient", cmp1])
+		print_run(["magick", "mogrify", "-auto-orient", cmp2])
+
+		psnr_out  = subprocess.run(["ffmpeg", "-i", cmp2, "-i", cmp1, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf‑8')
 		tmp_re    = grep(r'PSNR.*'        , psnr_out)
 		tmp_re    = grep(r'min:.* max'    , tmp_re)
 		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
