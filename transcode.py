@@ -15,13 +15,10 @@ IN_MEDIA  = Path("in/media")
 
 OUT_FOLDER = Path("out/folder")
 
-def print_run(data):
+def print_run(data, capture_output=False):
 	strings = [str(i) for i in data]
 	print(strings)
-	subprocess.run(strings)
-
-Q_min = 0
-Q_max = 100
+	return subprocess.run(strings, capture_output=capture_output)
 
 def append_line(file_path: str, line: str) -> None:
 	print(line)
@@ -43,11 +40,27 @@ def grep(pattern: re.Pattern, string: str):
 
 	return result[0];
 
+class cmd_ffmpeg_psnr:
+	def __init__(self, original: Path, transcoded: Path):
+		self.original   = original
+		self.transcoded = transcoded
+		self.stderr     = ""
+	
+	def run(self):
+		self.stderr = print_run(["ffmpeg", "-i", self.transcoded, "-i", self.original, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf-8')
+	
+	def psnr(self):
+		tmp_re    = grep(r'PSNR.*'        , self.stderr)
+		tmp_re    = grep(r'min:.* max'    , tmp_re)
+		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
+		return float(tmp_re)
+
 class Avifencode:
-	def __init__(self, src: Path, yuv: int, q: int, psnr_min: int, psnr_target: int):
-		self.src = src
-		self.yuv = yuv
-		self.q   = q
+	def __init__(self, src: Path, rotated: Path, yuv: int, q: int, psnr_min: int, psnr_target: int):
+		self.src     = src
+		self.rotated = rotated
+		self.yuv     = yuv
+		self.q       = q
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 
@@ -55,12 +68,7 @@ class Avifencode:
 		if (tmp.is_file()):
 			tmp.unlink()
 
-		self.enc_src = src
-		print(self.src.suffix)
-		if (self.src.suffix == ".webp"):
-			self.enc_src = self.src.with_suffix(".png")
-			print_run(["magick", "convert", self.src, self.enc_src])
-
+		self.enc_src = rotated
 
 		#magick -quality $q_now "$infile" "$tmpfile"
 
@@ -81,21 +89,19 @@ class Avifencode:
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
 		#avifenc -j 8 --yuv $yuv_now -q $q_now --cicp 1/13/0 --speed 0 --codec aom "$infile" "$tmpfile"
-		print_run(["avifenc", "-j", "8", "--yuv", self.yuv, "-q", self.q, "--speed", "0", "--codec", "aom", self.enc_src, tmp])
+		avif_command = ["avifenc", "-j", "8", "--yuv", self.yuv, "-q", self.q, "--speed", "0", "--codec", "aom"]
+		avif_result  = print_run(avif_command + [self.enc_src, tmp], capture_output=True)
+		print(avif_result.stdout.decode('utf‑8'))
 
-		# Auto orient before running ffmpeg
-		cmp1 = self.enc_src.with_suffix(".cmp1.avif")
-		cmp2 = src.with_suffix(".cmp2.avif")
-		print_run(["cp", self.enc_src, cmp1])
-		print_run(["cp", tmp, cmp2])
-		print_run(["magick", "mogrify", "-auto-orient", cmp1])
-		print_run(["magick", "mogrify", "-auto-orient", cmp2])
+		if (grep(r'Unrecognized file format for input file: ', avif_result.stderr.decode('utf-8'))):
+			self.enc_src = self.src.with_suffix(".png")
+			print_run(["magick", "convert", self.src, self.enc_src])
+			print_run(avif_command + [self.enc_src, tmp])
 
-		psnr_out  = subprocess.run(["ffmpeg", "-i", cmp2, "-i", cmp1, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf‑8')
-		tmp_re    = grep(r'PSNR.*'        , psnr_out)
-		tmp_re    = grep(r'min:.* max'    , tmp_re)
-		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
-		self.psnr = float(tmp_re)
+		self.ffmpeg_psnr = cmd_ffmpeg_psnr(self.enc_src, tmp)
+		self.ffmpeg_psnr.run()
+
+		self.psnr = self.ffmpeg_psnr.psnr()
 		self.y    = self.psnr - self.psnr_target
 		self.outBytes = read_binary_file(tmp)
 		if (self.is_bigger()):
@@ -112,9 +118,10 @@ class Avifencode:
 		return (self.psnr < self.psnr_min)
 
 class Parameter:
-	def __init__(self, name, values):
+	def __init__(self, name, values, print: bool):
 		self.name   = name
 		self.values = values
+		self.print  = print
 		self.value  = None
 
 	def __str__(self):
@@ -188,7 +195,7 @@ class to_avif(MultiDim_Problem):
 		self.parameters = []
 		for i in parameters:
 			self.parameters += [i]
-		self.parameters += [Parameter("yuv", [444, 422, 420])]
+		self.parameters += [Parameter("yuv", [444, 422, 420], True)]
 		self.axis =  []
 		self.axis += [Axis("q", 0, 100)]
 		self.cache: dict[list[str], Image] = {}
@@ -212,7 +219,8 @@ class to_avif(MultiDim_Problem):
 		for i in self.parameters:
 			if (str(i.name) == name):
 				i.set(value)
-				append_line(self.tmp_avif_txt, "\n"+str(name)+" "+str(value))
+				if (i.print):
+					append_line(self.tmp_avif_txt, "\n"+str(name)+" "+str(value))
 
 	def outfiles(self):
 		return [self.out_fail, self.out_avif, self.out_avif_txt]
@@ -233,6 +241,7 @@ class to_avif(MultiDim_Problem):
 		yuv         = 444
 		psnr_min    = 53
 		psnr_target = 54
+		rotated = self.infile
 		for i in self.parameters:
 			if (i.name == "yuv"):
 				yuv = i.value
@@ -240,10 +249,12 @@ class to_avif(MultiDim_Problem):
 				psnr_min = i.value
 			if (i.name == "PSNR_TARGET"):
 				psnr_target = i.value
+			if (i.name == "ROTATED"):
+				rotated = i.value
 
 		# Run
 		append_line(self.tmp_avif_txt, "doing: "+str(quality))
-		self.cache[identifier] = Avifencode(self.infile, yuv, quality, psnr_min, psnr_target)
+		self.cache[identifier] = Avifencode(self.infile, rotated, yuv, quality, psnr_min, psnr_target)
 		append_line(self.tmp_avif_txt, "done")
 
 		# Check filesize
@@ -327,8 +338,21 @@ class Folder(Transcode):
 class Image(Transcode):
 	def parameters_init(self):
 		self.parameters = []
-		self.parameters += [Parameter("PSNR_MIN",    [44])]
-		self.parameters += [Parameter("PSNR_TARGET", [45])]
+		self.parameters += [Parameter("PSNR_MIN",    [44], True)]
+		self.parameters += [Parameter("PSNR_TARGET", [45], True)]
+
+		result = print_run(["exiftool", "-orientation", self.path], capture_output=True)
+
+		if (grep(r'Rotate', result.stdout.decode('utf‑8'))):
+			rotated = self.path.with_suffix(".rotated" + self.path.suffix)
+			print(rotated)
+			print_run(["cp", self.path, rotated])
+			print_run(["magick", "mogrify", "-auto-orient", rotated])
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.path, rotated)
+			ffmpeg_psnr.run()
+			if(ffmpeg_psnr.psnr() >= (45 + 5)):
+				self.parameters += [Parameter("ROTATED", [rotated], False)]
+
 	def destination_empty(self):
 		for i in to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).outfiles():
 			if (i.is_file()):
@@ -348,15 +372,18 @@ class PNG_HQ(PNG):
 		return (self.path.suffix in {".png_hq"})
 	def parameters_init(self):
 		self.parameters = []
-		self.parameters += [Parameter("PSNR_MIN",    [53])]
-		self.parameters += [Parameter("PSNR_TARGET", [54])]
+		self.parameters += [Parameter("PSNR_MIN",    [53], True)]
+		self.parameters += [Parameter("PSNR_TARGET", [54], True)]
 
 class JPEG(Image):
 	def compatible_suffix(self):
 		return (self.path.suffix in {".jpg", ".JPG", ".jpeg", ".JPEG"})
 	def process_internal(self):
+		start = time.time()
 		print_run(["jpegoptim", self.path])
 		to_avif(self.path, Path(self.temp_out.name), self.destination, self.parameters).solve()
+		end   = time.time()
+		print(end - start)
 
 class WEBP(Image):
 	def compatible_suffix(self):
