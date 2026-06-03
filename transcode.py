@@ -61,6 +61,20 @@ class cmd_ffmpeg_psnr:
 		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
 		return float(tmp_re)
 
+class cmd_ffmpeg_vmaf:
+	def __init__(self, original: Path, transcoded: Path):
+		self.original   = original
+		self.transcoded = transcoded
+		self.stderr     = ""
+
+	def run(self):
+		self.stderr = print_run(["ffmpeg", "-i", self.transcoded, "-i", self.original, "-lavfi", "libvmaf", "-f", "null", "-"], capture_output=True).stderr.decode('utf-8')
+
+	def vmaf(self):
+		tmp_re    = grep(r'VMAF.*'        , self.stderr)
+		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
+		return float(tmp_re)
+
 class Cache_avif:
 	def __init__(self, inBytes, yuv, q, outBytes, psnr, y):
 		self.inBytes  = inBytes
@@ -75,6 +89,38 @@ class Cache_avif:
 		ret +=    "inBytes: " + str(self.inBytes)
 		ret +=    "yuv: "     + str(self.yuv)
 		ret +=    "q: "       + str(self.q)
+		ret += "}"
+		return ret
+
+class Cache_vaav1:
+	def __init__(self, inBytes, q, outBytes, psnr, vmaf, y):
+		self.inBytes  = inBytes
+		self.q        = q
+		self.outBytes = outBytes
+		self.psnr     = psnr
+		self.vmaf     = vmaf
+		self.y        = y
+
+	def __str__(self):
+		ret =  "{"
+		ret +=    "inBytes: " + str(self.inBytes)
+		ret +=    "crf: "     + str(self.crf)
+		ret += "}"
+		return ret
+
+class Cache_aomav1:
+	def __init__(self, inBytes, crf, outBytes, psnr, vmaf, y):
+		self.inBytes  = inBytes
+		self.crf      = crf
+		self.outBytes = outBytes
+		self.psnr     = psnr
+		self.vmaf     = vmaf
+		self.y        = y
+
+	def __str__(self):
+		ret =  "{"
+		ret +=    "inBytes: " + str(self.inBytes)
+		ret +=    "crf: "     + str(self.crf)
 		ret += "}"
 		return ret
 
@@ -242,12 +288,28 @@ class To_vaav1(Operation):
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
 		self.vmaf_target = vmaf_target
+	
+		self.cache: dict[list[str], Cache_vaav1] = {}
+		self.encode_source      = path
+		self.encode_destination = Path()
+		self.encode_info        = Path()
+		self.encode_log         = Path()
 	def outSuffix(self, path):
 		return path.with_suffix(".vaav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".vaav1.txt")
 	def run(self):
+		# test for gpu support
+		# brentq
+		# best
 		return False
+	def run_operation(self, q: int):
+		q = int(q)
+		vaav1_command =  ["ffmpeg", "-i", self.path]
+		vaav1_command += ["-vaapi_device", "/dev/dri/renderD128"]
+		vaav1_command += ["-vf", "'format=nv12,hwupload'", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29]
+		vaav1_command += ["-c:a", "libopus", "-b:a", "128k"]
+		vaav1_command += [self.encode_destination]
 
 class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
@@ -258,12 +320,110 @@ class To_aomav1(Operation):
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
 		self.vmaf_target = vmaf_target
+
+		self.cache: dict[list[str], Cache_aomav1] = {}
+		self.encode_source      = path
+		self.encode_destination = Path()
+		self.encode_info        = Path()
+		self.encode_log         = Path()
 	def outSuffix(self, path):
 		return path.with_suffix(".aomav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".aomav1.txt")
 	def run(self):
-		return False
+		stat_inType = self.path.suffix
+		stat_inSize = self.path.stat().st_size
+		self.encode_destination = self.outSuffix(self.path)
+		self.encode_info        = self.infoSuffix(self.path)
+
+		# brentq
+		print(root_scalar(self.run_operation, bracket=[0, 64], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
+
+		# best
+		best = None
+		for i in self.cache:
+			j = self.cache[i]
+			if (self.path.stat().st_size < len(j.outBytes)):
+				continue
+			if (j.psnr < self.psnr_min):
+				continue
+			if (j.vmaf < self.vmaf_min):
+				continue
+
+			if (not best):
+				best = j
+			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
+				best = j
+
+		print_run(["mkdir", "-p", self.outdir])
+
+		out_aomav1 = self.outdir / self.encode_destination.name
+		out_aomav1_txt = self.outdir / self.encode_info.name
+
+		ret = True
+	
+		stat_crf     = ""
+		stat_outSize = ""
+		stat_psnr    = ""
+		stat_vmaf    = ""
+		stat_y       = ""
+		if (best):
+			write_binary_file(out_avif, best.outBytes)
+			append_line(self.encode_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
+			stat_crf     = best.crf
+			stat_outSize = len(best.outBytes)
+			stat_psnr    = best.psnr
+			stat_vmaf    = best.vmaf
+			stat_y       = best.y
+		else:
+			print("best not found")
+			ret = False
+
+		print_run(["mv", self.encode_info, out_aomav1_txt])
+		print_run(["mv", self.encode_log,  out_aomav1_log])
+		append_line("stats/csv/to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
+		return ret
+
+	def run_operation(self, crf: int):
+		crf = int(crf)
+		input_hash = str(Cache_aomav1(read_binary_file(self.encode_source), crf, None, None, None, None))
+
+		if (self.cache.get(input_hash)):
+			return (self.cache.get(input_hash)).y
+
+		append_line(self.encode_info, string="doing: " + str(crf))
+
+		aomav1_command =  ["ffmpeg", "-i", self.path]
+		#aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
+		aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf]
+		aomav1_command += ["-c:a", "libopus", "-b:a", "128k"]
+		aomav1_command += [self.encode_destination]
+		aomav1_result = print_run(aomav1_command)
+
+		append_line(self.encode_info, string="done")
+		# detect error
+
+		psnr = 0.0
+		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
+			append_line(self.encode_info, string="bigger than source")
+		else:
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
+			ffmpeg_psnr.run()
+			psnr = ffmpeg_psnr.psnr()
+			append_line(self.encode_info, string="psnr " + str(psnr))
+
+		vmaf = 0.0
+		if (psnr >= self.psnr_min):
+			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.encode_source, self.encode_destination)
+			ffmpeg_vmaf.run()
+			vmaf = ffmpeg_vmaf.vmaf()
+		
+		y = vmaf - self.vmaf_target
+
+		# Store results to cache
+		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.encode_source), crf, read_binary_file(self.encode_destination), psnr, vmaf, y)
+		self.encode_destination.unlink()
+		return y
 
 class Copy(Operation):
 	def __init__(self, path: Path, outdir: Path):
@@ -415,9 +575,15 @@ class Webp(Image):
 class Mp4(Video):
 	def suffixes(self):
 		return {".mp4"}
+class Mov(Video):
+	def suffixes(self):
+		return {".mov"}
 class Mkv(Video):
 	def suffixes(self):
 		return {".mkv"}
+class Webm(Video):
+	def suffixes(self):
+		return {".webm"}
 
 class Transcode:
 	def __init__(self):
@@ -430,11 +596,13 @@ class Transcode:
 		webp = Webp()
 
 		mp4 = Mp4()
+		mov = Mov()
 		mkv = Mkv()
+		webm = Webm()
 
 		other = Other()
 
-		for i in [folder, png, jpeg, mp4, mkv, other]:
+		for i in [folder, png, jpeg, mp4, mov, mkv, webm, other]:
 			if (i.set(path)):
 				self.datatype = i
 				return
