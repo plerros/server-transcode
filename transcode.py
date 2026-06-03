@@ -412,8 +412,7 @@ class To_aomav1(Operation):
 		append_line(self.encode_info, string="doing: " + str(crf))
 
 		aomav1_command =  ["ffmpeg", "-i", self.path]
-		#aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
-		aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf]
+		aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
 		aomav1_command += ["-c:a", "libopus", "-b:a", "128k"]
 		aomav1_command += [self.encode_destination]
 		aomav1_result = print_run(aomav1_command)
