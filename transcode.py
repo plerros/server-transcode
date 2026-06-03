@@ -215,20 +215,19 @@ class To_avif(Operation):
 			input_hash = str(Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q))
 			print_run(avif_command + [self.encode_source, self.encode_destination])
 
-		ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
-		ffmpeg_psnr.run()
 		append_line(self.encode_info, string="done")
 
-		psnr = ffmpeg_psnr.psnr()
-		y    = psnr - self.psnr_target
-
 		# compare against original
+		psnr = 0.0
 		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
-			y = float("+inf")
 			append_line(self.encode_info, string="bigger than source")
 		else:
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
+			ffmpeg_psnr.run()
+			psnr = ffmpeg_psnr.psnr()
 			append_line(self.encode_info, string="psnr " + str(psnr))
 
+		y = psnr - self.psnr_target
 		# Store results to cache
 		self.cache[input_hash] = Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q, read_binary_file(self.encode_destination), psnr, y)
 
