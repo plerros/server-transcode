@@ -284,7 +284,7 @@ class Folder(In_types):
 		if (not path.is_dir()):
 			return False
 
-		if (not (path in (OUT / "folder"))):
+		if (not path.is_relative_to(IN_FOLDER)):
 			return False
 
 		self.path = Path(self.tempdir.name) / path.name
@@ -292,6 +292,11 @@ class Folder(In_types):
 
 		self.outdir = OUT / "folder"
 		return True
+	def run(self):
+		product = self.path.with_suffix(".7z")
+		print_run(["7za", "a", "-t7z", "-m0=lzma2", "-mx=9", "-mfb=273", "-md=29", "-ms=8g", "-mmt=off", "-mmtf=off", "-mqs=on", "-bt", "-bb3", product, self.path])
+		print_run(["mkdir", "-p", self.outdir])
+		print_run(["mv", product, self.outdir])
 
 class File(In_types):
 	def outCollision(self, path, outdir):
