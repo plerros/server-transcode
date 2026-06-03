@@ -178,7 +178,8 @@ class To_avif(Operation):
 		append_line("stats/csv/to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
 		return ret
 
-	def run_operation(self, q):
+	def run_operation(self, q: int):
+		q = int(q)
 		input_hash = str(Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q, None, None, None))
 
 		if (self.cache.get(input_hash)):
