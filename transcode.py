@@ -17,7 +17,10 @@ OUT        = Path("out")
 def print_run(data, capture_output=False):
 	strings = [str(i) for i in data]
 	print(strings)
-	return subprocess.run(strings, capture_output=capture_output)
+	result = subprocess.run(strings, capture_output=capture_output)
+	if (capture_output):
+		print(result.stdout.decode('utf‑8'))
+	return result
 
 def grep(pattern: re.Pattern, string: str):
 	result = re.search(pattern, string)
@@ -201,7 +204,6 @@ class To_avif(Operation):
 
 		avif_command = ["avifenc", "-j", "8", "--yuv", self.encode_yuv, "-q", q, "--speed", "0", "--codec", "aom"]
 		avif_result = print_run(avif_command + [self.encode_source, self.encode_destination], capture_output=True)
-		print(avif_result.stdout.decode('utf‑8'))
 
 		# Unsupported filetype
 		# should run only once, since we're overwriting the encode_source path
@@ -251,6 +253,7 @@ class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
 		self.path        = path
 		self.outdir      = outdir
+
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
