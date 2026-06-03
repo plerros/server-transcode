@@ -177,10 +177,18 @@ class To_avif(Operation):
 				stat_rotated = True
 
 		# brentq
+		failures = 0
 		for i in ["444", "422", "420"]:
 			self.encode_yuv = i
 			append_line(self.encode_info, string="\n" + "YUV " + i)
-			print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
+
+			try:
+				print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
+			except ValueError:
+				failures += 1
+
+		if (failures == 3):
+			return False
 
 		# find best
 		best = None
@@ -266,6 +274,7 @@ class To_avif(Operation):
 		# compare against original
 		psnr = 0.0
 		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
+			psnr = float("+inf")
 			append_line(self.encode_info, string="bigger than source")
 		else:
 			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
@@ -330,15 +339,26 @@ class To_aomav1(Operation):
 		return path.with_suffix(".aomav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".aomav1.txt")
+	def logSuffix(self, path):
+		return path.with_suffix(".aomav1.log")
 	def run(self):
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
 		self.encode_destination = self.outSuffix(self.path)
 		self.encode_info        = self.infoSuffix(self.path)
+		self.encode_log         = self.logSuffix(self.path)
+		out_aomav1 = self.outdir / self.encode_destination.name
+		out_aomav1_txt = self.outdir / self.encode_info.name
+		out_aomav1_log = self.outdir / self.encode_log.name
 
 		# brentq
-		print(root_scalar(self.run_operation, bracket=[0, 64], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
-
+		try:
+			print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
+		except ValueError:
+			print_run(["mv", self.encode_info, out_aomav1_txt])
+			print_run(["mv", self.encode_log,  out_aomav1_log])
+			return False
+		
 		# best
 		best = None
 		for i in self.cache:
@@ -357,8 +377,6 @@ class To_aomav1(Operation):
 
 		print_run(["mkdir", "-p", self.outdir])
 
-		out_aomav1 = self.outdir / self.encode_destination.name
-		out_aomav1_txt = self.outdir / self.encode_info.name
 
 		ret = True
 	
@@ -406,6 +424,7 @@ class To_aomav1(Operation):
 		psnr = 0.0
 		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
 			append_line(self.encode_info, string="bigger than source")
+			psnr = float("+inf")
 		else:
 			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
 			ffmpeg_psnr.run()
@@ -413,7 +432,7 @@ class To_aomav1(Operation):
 			append_line(self.encode_info, string="psnr " + str(psnr))
 
 		vmaf = 0.0
-		if (psnr >= self.psnr_min):
+		if ((psnr >= self.psnr_min) and (math.isfinite(psnr))):
 			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.encode_source, self.encode_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
@@ -518,12 +537,16 @@ class Image(File):
 
 class Video(File):
 	def operations(self):
-		to_vaav1 = To_vaav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target)
-		to_aomav1 = To_aomav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target)
+		to_vaav1 = To_vaav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
+		to_aomav1 = To_aomav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
 		copy = Copy(self.path, self.outdir)
 		return [to_vaav1, to_aomav1, copy]
 	def preRun(self):
 		return
+	def psnr_min(self):
+		return 30
+	def psnr_target(self):
+		return 45
 	def vmaf_min(self):
 		return 94
 	def vmaf_target(self):
