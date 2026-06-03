@@ -275,6 +275,10 @@ class Copy(Operation):
 	def infoSuffix(self, path):
 		return path
 	def run(self):
+		if (self.path.is_file()):
+			print_run(["mkdir", "-p", self.outdir])
+			print_run(["mv", self.path, self.outdir])
+
 		return False
 
 class In_types:
@@ -372,12 +376,14 @@ class Other(File):
 			return False
 
 		self.outdir = OUT / "other"
-		self.outdir = self.outdir / path.relative_to(IN_MEDIA)
+		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
+		print(self.outdir)
 
-		if (self.outCollision(path, outdir)):
+		if (self.outCollision(path, self.outdir)):
 			return False
 
-		print_run(["mv", path, self.outdir])
+		self.path = Path(self.tempdir.name) / path.name
+		print_run(["mv", path, self.path])
 
 		return True
 	def operations(self):
