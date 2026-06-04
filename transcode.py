@@ -21,6 +21,7 @@ def print_run(data, capture_output=False):
 	result = subprocess.run(strings, capture_output=capture_output)
 	if (capture_output):
 		print(result.stdout.decode('utf‑8'))
+		print(result.stderr.decode('utf‑8'))
 	return result
 
 def grep(pattern: re.Pattern, string: str):
@@ -126,62 +127,76 @@ class Cache_aomav1:
 		return ret
 
 class Operation():
-	def __init__(self):
-		self.path   = Path()
-		self.outdir = Path()
+	def __init__(self, path, outdir):
+		self.path   = path
+		self.outdir = outdir
+
+		# files used by run_operation()
+		self.op_source      = self.path
+		self.op_destination = self.outSuffix(self.path)
+		self.op_info        = self.infoSuffix(self.path)
+		self.op_log         = self.logSuffix(self.path)
+
+	def outFiles(self):
+		outFiles = []
+		if ((self.path == Path()) or (self.outdir == Path())):
+			return outFiles
+
+		for i in [self.op_destination, self.op_info, self.op_log]:
+			outFiles += [self.outdir / i.name]
+		return outFiles
+
 	def outCollision(self, path, outdir):
-		outFiles = [outdir / path.name]
-
-		outFiles += [outdir / self.outSuffix(path)]
-		outFiles += [outdir / self.infoSuffix(path)]
-
-		for i in outFiles:
+		for i in self.outFiles():
 			if (i.is_file()):
 				return True
 		return False
 
+	def run(self):
+		ret = self.run_internal()
+		print_run(["mkdir", "-p", self.outdir])
+		for i in [self.op_destination, self.op_info, self.op_log]:
+			print_run(["mv", i, self.outdir / i.name])
+		return ret
+
 class To_avif(Operation):
 	def __init__(self, path: Path, outdir: Path, psnr_min, psnr_target):
-		self.path     = path
-		self.outdir   = outdir
+		super().__init__(path, outdir)
 
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 
 		self.cache: dict[list[str], Cache_avif] = {}
-		self.encode_source = path
-		self.encode_destination = Path()
-		self.encode_info = Path()
 		self.encode_yuv = 444
 	def outSuffix(self, path):
 		return path.with_suffix(".avif")
 	def infoSuffix(self, path):
 		return path.with_suffix(".avif.txt")
-	def run(self):
+	def logSuffix(self, path):
+		return path.with_suffix(".avif.log")
+	def run_internal(self):
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
-		self.encode_destination = self.outSuffix(self.path)
-		self.encode_info        = self.infoSuffix(self.path)
 
 		# rotation
 		stat_rotated = False
-		result = print_run(["exiftool", "-orientation", self.encode_source], capture_output=True)
+		result = print_run(["exiftool", "-orientation", self.op_source], capture_output=True)
 		if (grep(r'Rotate', result.stdout.decode('utf‑8'))):
-			rotated = self.encode_source.with_suffix(".rotated" + self.encode_source.suffix)
-			print_run(["cp", self.encode_source, rotated])
+			rotated = self.op_source.with_suffix(".rotated" + self.op_source.suffix)
+			print_run(["cp", self.op_source, rotated])
 			print_run(["magick", "mogrify", "-auto-orient", rotated])
 
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, rotated)
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, rotated)
 			ffmpeg_psnr.run()
 			if (ffmpeg_psnr.psnr() > self.psnr_target + 5):
-				self.encode_source = rotated
+				self.op_source = rotated
 				stat_rotated = True
 
 		# brentq
 		failures = 0
 		for i in ["444", "422", "420"]:
 			self.encode_yuv = i
-			append_line(self.encode_info, string="\n" + "YUV " + i)
+			append_line(self.op_info, string="\n" + "YUV " + i)
 
 			try:
 				print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
@@ -205,10 +220,6 @@ class To_avif(Operation):
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
 
-		print_run(["mkdir", "-p", self.outdir])
-
-		out_avif = self.outdir / self.encode_destination.name
-		out_avif_txt = self.outdir / self.encode_info.name
 
 		ret = True
 
@@ -218,8 +229,8 @@ class To_avif(Operation):
 		stat_psnr    = ""
 		stat_y       = ""
 		if (best):
-			write_binary_file(out_avif, best.outBytes)
-			append_line(self.encode_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
+			write_binary_file(self.op_destination, best.outBytes)
+			append_line(self.op_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
 			stat_yuv     = best.yuv
 			stat_q       = best.q
 			stat_outSize = len(best.outBytes)
@@ -229,18 +240,17 @@ class To_avif(Operation):
 			print("best not found")
 			ret = False
 
-		print_run(["mv", self.encode_info, out_avif_txt])
 		append_line(STATS_CSV / "to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
 		return ret
 
 	def run_operation(self, q: int):
 		q = int(q)
-		input_hash = str(Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q, None, None, None))
+		input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
 
-		append_line(self.encode_info, string="doing: " + str(q))
+		append_line(self.op_info, string="doing: " + str(q))
 
 		# cicp CP/TC/MC
 		# https://github.com/AOMediaCodec/libavif/wiki/CICP
@@ -259,72 +269,70 @@ class To_avif(Operation):
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
 		avif_command = ["avifenc", "-j", "8", "--yuv", self.encode_yuv, "-q", q, "--speed", "0", "--codec", "aom"]
-		avif_result = print_run(avif_command + [self.encode_source, self.encode_destination], capture_output=True)
+		avif_result = print_run(avif_command + [self.op_source, self.op_destination], capture_output=True)
 
 		# Unsupported filetype
-		# should run only once, since we're overwriting the encode_source path
+		# should run only once, since we're overwriting the op_source path
 		if (grep(r'Unrecognized file format for input file: ', avif_result.stderr.decode('utf-8'))):
-			tmp = self.encode_source.with_suffix(".png")
-			print_run(["magick", "convert", self.encode_source, tmp])
-			self.encode_source = tmp
-			input_hash = str(Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q))
-			print_run(avif_command + [self.encode_source, self.encode_destination])
+			tmp = self.op_source.with_suffix(".png")
+			print_run(["magick", "convert", self.op_source, tmp])
+			self.op_source = tmp
+			input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q))
+			print_run(avif_command + [self.op_source, self.op_destination])
 
-		append_line(self.encode_info, string="done")
+		append_line(self.op_info, string="done")
 
 		# compare against original
 		psnr = 0.0
-		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
+		if (self.path.stat().st_size < self.op_destination.stat().st_size):
 			psnr = float("+inf")
-			append_line(self.encode_info, string="bigger than source")
+			append_line(self.op_info, string="bigger than source")
 		else:
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
-			append_line(self.encode_info, string="psnr " + str(psnr))
+			append_line(self.op_info, string="psnr " + str(psnr))
 
 		y = psnr - self.psnr_target
 		# Store results to cache
-		self.cache[input_hash] = Cache_avif(read_binary_file(self.encode_source), self.encode_yuv, q, read_binary_file(self.encode_destination), psnr, y)
+		self.cache[input_hash] = Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, read_binary_file(self.op_destination), psnr, y)
 
-		self.encode_destination.unlink()
+		self.op_destination.unlink()
 		return y
 
 class To_vaav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
-		self.path        = path
-		self.outdir      = outdir
+		super().__init__(path, outdir)
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
 		self.vmaf_target = vmaf_target
 	
 		self.cache: dict[list[str], Cache_vaav1] = {}
-		self.encode_source      = path
-		self.encode_destination = Path()
-		self.encode_info        = Path()
-		self.encode_log         = Path()
 	def outSuffix(self, path):
 		return path.with_suffix(".vaav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".vaav1.txt")
+	def logSuffix(self, path):
+		return path.with_suffix(".vaav1.log")
 	def run(self):
+		self.run_internal()
+	def run_internal(self):
 		# test for gpu support
 		# brentq
 		# best
 		return False
 	def run_operation(self, q: int):
 		q = int(q)
-		vaav1_command =  ["ffmpeg", "-i", self.path]
+		vaav1_command =  ["ffmpeg", "-i", self.op_source]
 		vaav1_command += ["-vaapi_device", "/dev/dri/renderD128"]
 		vaav1_command += ["-vf", "'format=nv12,hwupload'", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29]
 		vaav1_command += ["-c:a", "libopus", "-b:a", "128k"]
-		vaav1_command += [self.encode_destination]
+		vaav1_command += [self.op_destination]
 
 class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
-		self.path        = path
-		self.outdir      = outdir
+		super().__init__(path, outdir)
 
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
@@ -332,32 +340,20 @@ class To_aomav1(Operation):
 		self.vmaf_target = vmaf_target
 
 		self.cache: dict[list[str], Cache_aomav1] = {}
-		self.encode_source      = path
-		self.encode_destination = Path()
-		self.encode_info        = Path()
-		self.encode_log         = Path()
 	def outSuffix(self, path):
 		return path.with_suffix(".aomav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".aomav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".aomav1.log")
-	def run(self):
+	def run_internal(self):
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
-		self.encode_destination = self.outSuffix(self.path)
-		self.encode_info        = self.infoSuffix(self.path)
-		self.encode_log         = self.logSuffix(self.path)
-		out_aomav1 = self.outdir / self.encode_destination.name
-		out_aomav1_txt = self.outdir / self.encode_info.name
-		out_aomav1_log = self.outdir / self.encode_log.name
 
 		# brentq
 		try:
 			print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
 		except ValueError:
-			print_run(["mv", self.encode_info, out_aomav1_txt])
-			print_run(["mv", self.encode_log,  out_aomav1_log])
 			return False
 		
 		# best
@@ -376,9 +372,6 @@ class To_aomav1(Operation):
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
 
-		print_run(["mkdir", "-p", self.outdir])
-
-
 		ret = True
 	
 		stat_crf     = ""
@@ -387,8 +380,8 @@ class To_aomav1(Operation):
 		stat_vmaf    = ""
 		stat_y       = ""
 		if (best):
-			write_binary_file(out_avif, best.outBytes)
-			append_line(self.encode_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
+			write_binary_file(self.op_destination, best.outBytes)
+			append_line(self.op_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
 			stat_crf     = best.crf
 			stat_outSize = len(best.outBytes)
 			stat_psnr    = best.psnr
@@ -398,64 +391,65 @@ class To_aomav1(Operation):
 			print("best not found")
 			ret = False
 
-		print_run(["mv", self.encode_info, out_aomav1_txt])
-		print_run(["mv", self.encode_log,  out_aomav1_log])
 		append_line(STATS_CSV / "to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
 		return ret
 
 	def run_operation(self, crf: int):
 		crf = int(crf)
-		input_hash = str(Cache_aomav1(read_binary_file(self.encode_source), crf, None, None, None, None))
+		input_hash = str(Cache_aomav1(read_binary_file(self.op_source), crf, None, None, None, None))
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
 
-		append_line(self.encode_info, string="doing: " + str(crf))
+		append_line(self.op_source, string="doing: " + str(crf))
 
-		aomav1_command =  ["ffmpeg", "-i", self.path]
+		aomav1_command =  ["ffmpeg", "-i", self.op_source]
 		aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
 		aomav1_command += ["-c:a", "libopus", "-b:a", "128k"]
-		aomav1_command += [self.encode_destination]
-		aomav1_result = print_run(aomav1_command)
+		aomav1_command += [self.op_destination]
+		aomav1_result = print_run(aomav1_command, capture_output=True)
 
-		append_line(self.encode_info, string="done")
+		append_line(self.op_info, string="done")
+		write_binary_file(self.op_log, b''+aomav1_result.stdout+aomav1_result.stderr)
 		# detect error
 
 		psnr = 0.0
-		if (self.path.stat().st_size < self.encode_destination.stat().st_size):
-			append_line(self.encode_info, string="bigger than source")
+		if (self.path.stat().st_size < self.op_destination.stat().st_size):
+			append_line(self.op_info, string="bigger than source")
 			psnr = float("+inf")
 		else:
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.encode_source, self.encode_destination)
+			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
-			append_line(self.encode_info, string="psnr " + str(psnr))
+			append_line(self.op_info, string="psnr " + str(psnr))
 
 		vmaf = 0.0
 		if ((psnr >= self.psnr_min) and (math.isfinite(psnr))):
-			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.encode_source, self.encode_destination)
+			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 		
 		y = vmaf - self.vmaf_target
 
 		# Store results to cache
-		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.encode_source), crf, read_binary_file(self.encode_destination), psnr, vmaf, y)
-		self.encode_destination.unlink()
+		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.op_source), crf, read_binary_file(self.op_destination), psnr, vmaf, y)
+		self.op_destination.unlink()
 		return y
 
 class Copy(Operation):
 	def __init__(self, path: Path, outdir: Path):
-		self.path        = path
-		self.outdir      = outdir
+		super().__init__(path, outdir)
 	def outSuffix(self, path):
 		return path
 	def infoSuffix(self, path):
+		return path
+	def logSuffix(self, path):
 		return path
 	def run(self):
 		if (self.path.is_file()):
 			print_run(["mkdir", "-p", self.outdir])
 			print_run(["mv", self.path, self.outdir])
+			return True
 
 		return False
 
@@ -485,9 +479,12 @@ class Folder(In_types):
 		print_run(["mv", product, self.outdir])
 
 class File(In_types):
-	def outCollision(self, path, outdir):
+	def outCollision(self):
+		if (self.path == Path()) or (self.outdir == Path())
+			return True
+
 		for i in self.operations():
-			if (i.outCollision(path, outdir)):
+			if (i.outCollision(self.path, self.outdir)):
 				return True
 		return False
 	def run(self):
@@ -501,24 +498,23 @@ class File(In_types):
 		if (not path.is_file()):
 			return False
 
+		# Compatible suffix
 		suffixes = self.suffixes()
 		for i in self.suffixes():
 			suffixes.add(str.upper(i))
-
 		if (not (path.suffix in suffixes)):
 			return False
 
-		outdir = OUT / path.suffix
-		outdir = outdir / path.parent.relative_to(IN_MEDIA)
+		# Late initialization
+		self.path = Path(self.tempdir.name) / path.name
+		self.outdir = OUT / path.suffix
+		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
 
-		if (self.outCollision(path, outdir)):
+		if (self.outCollision()):
 			return False
 
-		self.path = Path(self.tempdir.name) / path.name
 		print_run(["mv", path, self.path])
 
-		self.outdir = outdir
-		self.operation = Operation()
 
 		return True
 
@@ -557,14 +553,14 @@ class Other(File):
 		if (not path.is_file()):
 			return False
 
+		# Late initialization
+		self.path = Path(self.tempdir.name) / path.name
 		self.outdir = OUT / "other"
 		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
-		print(self.outdir)
 
-		if (self.outCollision(path, self.outdir)):
+		if (self.outCollision()):
 			return False
 
-		self.path = Path(self.tempdir.name) / path.name
 		print_run(["mv", path, self.path])
 
 		return True
