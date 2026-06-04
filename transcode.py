@@ -13,6 +13,7 @@ import time
 IN_FOLDER  = Path("in/folder")
 IN_MEDIA   = Path("in/media")
 OUT        = Path("out")
+STATS_CSV  = Path("stats/csv")
 
 def print_run(data, capture_output=False):
 	strings = [str(i) for i in data]
@@ -229,7 +230,7 @@ class To_avif(Operation):
 			ret = False
 
 		print_run(["mv", self.encode_info, out_avif_txt])
-		append_line("stats/csv/to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
+		append_line(STATS_CSV / "to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
 		return ret
 
 	def run_operation(self, q: int):
@@ -399,7 +400,7 @@ class To_aomav1(Operation):
 
 		print_run(["mv", self.encode_info, out_aomav1_txt])
 		print_run(["mv", self.encode_log,  out_aomav1_log])
-		append_line("stats/csv/to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
+		append_line(STATS_CSV / "to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
 		return ret
 
 	def run_operation(self, crf: int):
@@ -652,6 +653,10 @@ def multiplexer(lock_media, lock_folder):
 		time.sleep(10)
 
 if __name__ == "__main__":
+	print_run(["mkdir", "-p", IN_FOLDER])
+	print_run(["mkdir", "-p", IN_MEDIA])
+	print_run(["mkdir", "-p", "in/user-private"])
+	print_run(["mkdir", "-p", STATS_CSV])
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
