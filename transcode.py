@@ -482,7 +482,7 @@ class Folder(In_types):
 
 class File(In_types):
 	def outCollision(self):
-		if (self.path == Path()) or (self.outdir == Path())
+		if (self.path == Path()) or (self.outdir == Path()):
 			return True
 
 		for i in self.operations():
@@ -501,10 +501,15 @@ class File(In_types):
 			return False
 
 		# Compatible suffix
-		suffixes = self.suffixes()
+		is_compatible = False
+		compatible_suffixes = self.suffixes()
 		for i in self.suffixes():
-			suffixes.add(str.upper(i))
-		if (not (path.suffix in suffixes)):
+			compatible_suffixes.add(str.upper(i))
+		suffixes = path.suffixes
+		for idx, x in enumerate(path.suffixes):
+			if (''.join(str(i) for i in suffixes[idx:None])) in compatible_suffixes:
+				is_compatible = True
+		if (not is_compatible):
 			return False
 
 		# Late initialization
@@ -572,6 +577,11 @@ class Other(File):
 	def preRun(self):
 		return
 
+class Jpeg(Image):
+	def suffixes(self):
+		return {".jpg", ".jpeg"}
+	def preRun(self):
+		print_run(["jpegoptim", self.path])
 class Png(Image):
 	def suffixes(self):
 		return {".png"}
@@ -579,51 +589,45 @@ class Png(Image):
 		print_run(["optipng", "-o7", self.path])
 class Png_hq(Png):
 	def suffixes(self):
-		return {".png_hq"}
+		return {".hq.png"}
 	def psnr_min(self):
 		return 53
 	def psnr_target(self):
 		return 54
-class Jpeg(Image):
-	def suffixes(self):
-		return {".jpg", ".jpeg"}
-	def preRun(self):
-		print_run(["jpegoptim", self.path])
 class Webp(Image):
 	def suffixes(self):
 		return {".webp"}
 
-class Mp4(Video):
+class Avi(Video):
 	def suffixes(self):
-		return {".mp4"}
+		return {".avi"}
+class Mkv(Video):
+	def suffixes(self):
+		return {".h264.mkv"}
 class Mov(Video):
 	def suffixes(self):
 		return {".mov"}
-class Mkv(Video):
+class Mp4(Video):
 	def suffixes(self):
-		return {".mkv"}
+		return {".mp4"}
 class Webm(Video):
 	def suffixes(self):
 		return {".webm"}
+class Wmv(Video):
+	def suffixes(self):
+		return {".wmv"}
 
 class Transcode:
 	def __init__(self):
 		self.datatype = Other()
 	def set(self, path:Path):
-		folder = Folder()
 
-		png  = Png()
-		jpeg = Jpeg()
-		webp = Webp()
-
-		mp4 = Mp4()
-		mov = Mov()
-		mkv = Mkv()
-		webm = Webm()
-
-		other = Other()
-
-		for i in [folder, png, jpeg, mp4, mov, mkv, webm, other]:
+		for i in [
+			Folder(),
+			Jpeg(), Png(), Png_hq(),
+			Avi(), Mkv(), Mov(), Mp4(), Webm(),
+			Other()
+		]:
 			if (i.set(path)):
 				self.datatype = i
 				return True
