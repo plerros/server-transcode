@@ -626,7 +626,9 @@ class Transcode:
 		for i in [folder, png, jpeg, mp4, mov, mkv, webm, other]:
 			if (i.set(path)):
 				self.datatype = i
-				return
+				return True
+		print("Already exists in out/other:", path)
+		return False
 
 	def run(self):
 		self.datatype.run()
@@ -637,15 +639,15 @@ def multiplexer(lock_media, lock_folder):
 		with lock_folder:
 			folders = [i for i in IN_FOLDER.iterdir() if i.is_dir()]
 			for i in folders:
-				transcode.set(i)
-				break
+				if (transcode.set(i)):
+					break
 		transcode.run()
 
 		with lock_media:
 			medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
 			for i in medias:
-				transcode.set(i)
-				break
+				if (transcode.set(i)):
+					break
 
 		transcode.run()
 		time.sleep(10)
