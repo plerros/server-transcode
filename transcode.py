@@ -60,8 +60,12 @@ class cmd_ffmpeg_psnr:
 	def psnr(self):
 		tmp_re    = grep(r'PSNR.*'        , self.stderr)
 		tmp_re    = grep(r'min:.* max'    , tmp_re)
-		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
-		return float(tmp_re)
+		finite    = grep(r'[0-9]*\.[0-9]*', tmp_re)
+		infinite  = grep(r'inf', tmp_re)
+		if (finite == ""):
+			return float(infinite)
+
+		return float(finite)
 
 class cmd_ffmpeg_vmaf:
 	def __init__(self, original: Path, transcoded: Path):
@@ -283,9 +287,8 @@ class To_avif(Operation):
 		append_line(self.op_info, string="done")
 
 		# compare against original
-		psnr = 0.0
+		psnr = float("nan")
 		if (self.path.stat().st_size < self.op_destination.stat().st_size):
-			psnr = float("+inf")
 			append_line(self.op_info, string="bigger than source")
 		else:
 			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
@@ -413,18 +416,17 @@ class To_aomav1(Operation):
 		write_binary_file(self.op_log, b''+aomav1_result.stdout+aomav1_result.stderr)
 		# detect error
 
-		psnr = 0.0
+		psnr = float("nan")
+		vmaf = float("nan")
 		if (self.path.stat().st_size < self.op_destination.stat().st_size):
 			append_line(self.op_info, string="bigger than source")
-			psnr = float("+inf")
 		else:
 			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
 
-		vmaf = 0.0
-		if ((psnr >= self.psnr_min) and (math.isfinite(psnr))):
+		if (psnr >= self.psnr_min):
 			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
