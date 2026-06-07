@@ -11,11 +11,13 @@ import subprocess
 import tempfile
 import time
 
-IN_FOLDER  = Path("in/folder")
-IN_MEDIA   = Path("in/media")
-OUT        = Path("out")
-STATS_CSV  = Path("stats/csv")
-LOCAL_TMP  = Path("tmp")
+ROOT         = Path("root")
+USER_PRIVATE = ROOT / "in/user_private"
+IN_FOLDER    = ROOT / "in/folder"
+IN_MEDIA     = ROOT / "in/media"
+OUT          = ROOT / "out"
+STATS_CSV    = ROOT / "stats/csv"
+LOCAL_TMP    = ROOT / "tmp"
 
 def grep(pattern: re.Pattern, string: str):
 	result = re.search(pattern, string)
@@ -29,7 +31,7 @@ def append_line(file_path: str, string="", csv=[]) -> None:
 	for i in csv:
 		line += ","+str(i)
 
-	print(line)
+	print("[info  ]", line)
 	with open(file_path, mode='a', encoding='utf-8') as f:
 		f.write(line+"\n")
 
@@ -49,11 +51,11 @@ class Command():
 		self.args = args
 	def run(self, capture_output=False):
 		strings = [self.execName] + [str(i) for i in self.args]
-		print(strings)
+		print("[exec  ]", strings)
 		result = subprocess.run(strings, capture_output=capture_output)
 		if (capture_output):
-			print(result.stdout.decode('utf‑8'))
-			print(result.stderr.decode('utf‑8'))
+			print("[exec  ]", result.stdout.decode('utf‑8'))
+			print("[exec  ]", result.stderr.decode('utf‑8'))
 		return result
 	def exec_exists(self):
 		return (shutil.which(self.execName) is not None)
@@ -118,7 +120,7 @@ class Ffmpeg_vmaf(Command):
 	def __init__(self):
 		super().__init__("ffmpeg")
 	def set(self, original: Path, transcoded: Path):
-		super().set(["ffmpeg", "-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
 		self.stderr     = ""
 		return self
 	def run(self, capture_output=False):
@@ -280,7 +282,7 @@ class To_avif(Operation):
 			append_line(self.op_info, string="\n" + "YUV " + i)
 
 			try:
-				print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
+				print("[exec  ]", root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
 			except ValueError:
 				failures += 1
 
@@ -318,7 +320,7 @@ class To_avif(Operation):
 			stat_psnr    = best.psnr
 			stat_y       = best.y
 		else:
-			print("best not found")
+			print("[info  ]", "best not found")
 			ret = False
 
 		append_line(STATS_CSV / "to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
@@ -427,7 +429,7 @@ class To_aomav1(Operation):
 
 		# brentq
 		try:
-			print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
+			print("[exec  ]", root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
 		except ValueError:
 			return False
 		
@@ -463,7 +465,7 @@ class To_aomav1(Operation):
 			stat_vmaf    = best.vmaf
 			stat_y       = best.y
 		else:
-			print("best not found")
+			print("[info  ]", "best not found")
 			ret = False
 
 		append_line(STATS_CSV / "to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
@@ -477,7 +479,7 @@ class To_aomav1(Operation):
 			return (self.cache.get(input_hash)).y
 
 		append_line(self.op_info, string="doing: " + str(crf))
-		aomav1_result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, self.crf).run(capture_output=True)
+		aomav1_result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run(capture_output=True)
 
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+aomav1_result.stdout+aomav1_result.stderr)
@@ -692,7 +694,7 @@ class Transcode:
 			if (datatype.set(path)):
 				self.datatype = datatype
 				return True
-		print("Already exists in out/other:", path)
+		print("[error ]", "Already exists in out/other:", path)
 		return False
 
 	def run(self):
@@ -718,20 +720,24 @@ def multiplexer(lock_media, lock_folder):
 		time.sleep(10)
 
 if __name__ == "__main__":
+	print("[status]", "launching")
 	for i in Command.__subclasses__():
 		cmd = i()
 		if (not cmd.exec_exists()):
 			print("Missing:", cmd.execName)
 			exit(1)
 
-	os.makedirs(IN_FOLDER,         exist_ok=True)
-	os.makedirs(IN_MEDIA,          exist_ok=True)
-	os.makedirs("in/user-private", exist_ok=True)
-	os.makedirs(STATS_CSV,         exist_ok=True)
+	print("[status]", "checks OK")
 
-	shutil.rmtree(LOCAL_TMP)
+	os.makedirs(USER_PRIVATE, exist_ok=True)
+	os.makedirs(IN_FOLDER,    exist_ok=True)
+	os.makedirs(IN_MEDIA,     exist_ok=True)
+	os.makedirs(STATS_CSV,    exist_ok=True)
+
+	if (LOCAL_TMP.is_dir()):
+		shutil.rmtree(LOCAL_TMP)
 	os.makedirs(LOCAL_TMP,         exist_ok=True)
-	
+
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
@@ -739,3 +745,5 @@ if __name__ == "__main__":
 		p.start()
 	for p in processes:
 		p.join()
+
+	print("[status]", "exiting")

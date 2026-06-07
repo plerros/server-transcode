@@ -6,8 +6,11 @@ rmdir /exports/out
 rm /exports/in
 rm /exports/out
 
-ln -s "$(pwd)/in"  /exports/in
-ln -s "$(pwd)/out" /exports/out
+mkdir -p /root/in
+mkdir -p /root/out
+
+ln -s "$(pwd)/root/in"  /exports/in
+ln -s "$(pwd)/root/out" /exports/out
 
 line="/exports/in  $(cat ip.txt)/24(rw,sync,no_subtree_check)"
 grep -qxF "$line" /etc/exports || printf '%s\n' "$line" | sudo tee -a /etc/exports
