@@ -1,9 +1,3 @@
-mkdir in
-mkdir in/folder
-mkdir in/media
-mkdir in/user_private
-mkdir out
-
 sudo mkdir /exports
 sudo chown "$(whoami):$(whoami)" /exports
 
