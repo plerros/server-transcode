@@ -3,9 +3,10 @@
 import math
 import multiprocessing
 import os
-from pathlib import Path
+from   pathlib import Path
 import re
 from   scipy.optimize import root_scalar
+import shutil
 import subprocess
 import tempfile
 import time
@@ -14,15 +15,7 @@ IN_FOLDER  = Path("in/folder")
 IN_MEDIA   = Path("in/media")
 OUT        = Path("out")
 STATS_CSV  = Path("stats/csv")
-
-def print_run(data, capture_output=False):
-	strings = [str(i) for i in data]
-	print(strings)
-	result = subprocess.run(strings, capture_output=capture_output)
-	if (capture_output):
-		print(result.stdout.decode('utf‑8'))
-		print(result.stderr.decode('utf‑8'))
-	return result
+LOCAL_TMP  = Path("tmp")
 
 def grep(pattern: re.Pattern, string: str):
 	result = re.search(pattern, string)
@@ -45,18 +38,65 @@ def read_binary_file(path: str) -> bytes:
 		return f.read()
 
 def write_binary_file(path: str, data: bytes) -> None:
-    with open(path, "wb") as f:
-        f.write(data)
+	with open(path, "wb") as f:
+		f.write(data)
 
-class cmd_ffmpeg_psnr:
-	def __init__(self, original: Path, transcoded: Path):
-		self.original   = original
-		self.transcoded = transcoded
+class Command():
+	def __init__(self, execName):
+		self.execName = execName
+		self.args     = []
+	def set(self, args):
+		self.args = args
+	def run(self, capture_output=False):
+		strings = [self.execName] + [str(i) for i in self.args]
+		print(strings)
+		result = subprocess.run(strings, capture_output=capture_output)
+		if (capture_output):
+			print(result.stdout.decode('utf‑8'))
+			print(result.stderr.decode('utf‑8'))
+		return result
+	def exec_exists(self):
+		return (shutil.which(self.execName) is not None)
+
+class Avifenc(Command):
+	def __init__(self):
+		super().__init__("avifenc")
+	def set(self, source: Path, destination: Path, yuv, q):
+		super().set(["-j", "8", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
+		return self
+
+class Cmd_7za(Command):
+	def __init__(self):
+		super().__init__("7za")
+	def set(self, folder: Path, out_7z: Path):
+		super().set(["a", "-t7z", "-m0=lzma2", "-mx=9", "-mfb=273", "-md=29", "-ms=8g", "-mmt=off", "-mmtf=off", "-mqs=on", "-bt", "-bb3", out_7z, folder])
+		return self
+
+class Exiftool_orientation(Command):
+	def __init__(self):
+		super().__init__("exiftool")
+	def set(self, path:Path):
+		super().set(["-orientation", path])
+		return self
+
+class Ffmpeg_aomav1(Command):
+	def __init__(self):
+		super().__init__("ffmpeg")
+	def set(self, source: Path, destination: Path, crf):
+		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
+		return self
+
+class Ffmpeg_psnr(Command):
+	def __init__(self):
+		super().__init__("ffmpeg")
+	def set(self, original: Path, transcoded: Path):
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
 		self.stderr     = ""
-
-	def run(self):
-		self.stderr = print_run(["ffmpeg", "-i", self.transcoded, "-i", self.original, "-filter_complex", "psnr", "-f", "null", "-"], capture_output=True).stderr.decode('utf-8')
-
+		return self
+	def run(self, capture_output=False):
+		result = super().run(capture_output=True)
+		self.stderr = result.stderr.decode('utf-8')
+		return result
 	def psnr(self):
 		tmp_re    = grep(r'PSNR.*'        , self.stderr)
 		tmp_re    = grep(r'min:.* max'    , tmp_re)
@@ -67,19 +107,56 @@ class cmd_ffmpeg_psnr:
 
 		return float(finite)
 
-class cmd_ffmpeg_vmaf:
-	def __init__(self, original: Path, transcoded: Path):
-		self.original   = original
-		self.transcoded = transcoded
+class Ffmpeg_vaav1(Command):
+	def __init__(self):
+		super().__init__("ffmpeg")
+	def set(self, source: Path, destination: Path, q):
+		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "'format=nv12,hwupload'", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
+		return self
+
+class Ffmpeg_vmaf(Command):
+	def __init__(self):
+		super().__init__("ffmpeg")
+	def set(self, original: Path, transcoded: Path):
+		super().set(["ffmpeg", "-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
 		self.stderr     = ""
-
-	def run(self):
-		self.stderr = print_run(["ffmpeg", "-i", self.transcoded, "-i", self.original, "-lavfi", "libvmaf", "-f", "null", "-"], capture_output=True).stderr.decode('utf-8')
-
+		return self
+	def run(self, capture_output=False):
+		result = super().run(capture_output=True)
+		self.stderr = result.stderr.decode('utf-8')
+		return result
 	def vmaf(self):
 		tmp_re    = grep(r'VMAF.*'        , self.stderr)
 		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
 		return float(tmp_re)
+
+class Jpegoptim(Command):
+	def __init__(self):
+		super().__init__("jpegoptim")
+	def set(self, path: Path):
+		super().set([path])
+		return self
+
+class Magick_convert(Command):
+	def __init__(self):
+		super().__init__("magick")
+	def set(self, original: Path, converted: Path):
+		super().set(["convert", original, converted])
+		return self
+
+class Magick_mogrify_autoorient(Command):
+	def __init__(self):
+		super().__init__("magick")
+	def set(self, path:Path):
+		super().set(["mogrify", "-auto-orient", path])
+		return self
+
+class Optipng(Command):
+	def __init__(self):
+		super().__init__("optipng")
+	def set(self, path: Path):
+		super().set(["-o7", path])
+		return self
 
 class Cache_avif:
 	def __init__(self, inBytes, yuv, q, outBytes, psnr, y):
@@ -158,9 +235,9 @@ class Operation():
 
 	def run(self):
 		ret = self.run_internal()
-		print_run(["mkdir", "-p", self.outdir])
+		os.makedirs(self.outdir, exist_ok=True)
 		for i in [self.op_destination, self.op_info, self.op_log]:
-			print_run(["mv", i, self.outdir / i.name])
+			os.rename(i, self.outdir / i.name)
 		return ret
 
 class To_avif(Operation):
@@ -184,13 +261,13 @@ class To_avif(Operation):
 
 		# rotation
 		stat_rotated = False
-		result = print_run(["exiftool", "-orientation", self.op_source], capture_output=True)
+		result = Exiftool_orientation().set(self.op_source).run(capture_output=True)
 		if (grep(r'Rotate', result.stdout.decode('utf‑8'))):
 			rotated = self.op_source.with_suffix(".rotated" + self.op_source.suffix)
-			print_run(["cp", self.op_source, rotated])
-			print_run(["magick", "mogrify", "-auto-orient", rotated])
+			shutil.copyfile(self.op_source, rotated)
+			Magick_mogrify_autoorient().set(rotated).run()
 
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, rotated)
+			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, rotated)
 			ffmpeg_psnr.run()
 			if (ffmpeg_psnr.psnr() > self.psnr_target + 5):
 				self.op_source = rotated
@@ -272,26 +349,26 @@ class To_avif(Operation):
 		# MC, Matrix Coefficients
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
-		avif_command = ["avifenc", "-j", "8", "--yuv", self.encode_yuv, "-q", q, "--speed", "0", "--codec", "aom"]
-		avif_result = print_run(avif_command + [self.op_source, self.op_destination], capture_output=True)
+		avif_result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)	
 
 		# Unsupported filetype
 		# should run only once, since we're overwriting the op_source path
 		if (grep(r'Unrecognized file format for input file: ', avif_result.stderr.decode('utf-8'))):
 			tmp = self.op_source.with_suffix(".png")
-			print_run(["magick", "convert", self.op_source, tmp])
+			Magick_convert().set(self.op_source, tmp).run()
 			self.op_source = tmp
-			input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q))
-			print_run(avif_command + [self.op_source, self.op_destination])
+			input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
+			avif_result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)
 
 		append_line(self.op_info, string="done")
+		write_binary_file(self.op_log, b''+avif_result.stdout+avif_result.stderr)
 
 		# compare against original
-		psnr = float("nan")
+		psnr = float("+inf")
 		if (self.path.stat().st_size < self.op_destination.stat().st_size):
 			append_line(self.op_info, string="bigger than source")
 		else:
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
+			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
@@ -327,11 +404,6 @@ class To_vaav1(Operation):
 		return False
 	def run_operation(self, q: int):
 		q = int(q)
-		vaav1_command =  ["ffmpeg", "-i", self.op_source]
-		vaav1_command += ["-vaapi_device", "/dev/dri/renderD128"]
-		vaav1_command += ["-vf", "'format=nv12,hwupload'", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29]
-		vaav1_command += ["-c:a", "libopus", "-b:a", "128k"]
-		vaav1_command += [self.op_destination]
 
 class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
@@ -384,7 +456,7 @@ class To_aomav1(Operation):
 		stat_y       = ""
 		if (best):
 			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
+			append_line(self.op_info, string="best: "+str(best.crf)+" "+str(best.psnr)+" "+str(best.vmaf))
 			stat_crf     = best.crf
 			stat_outSize = len(best.outBytes)
 			stat_psnr    = best.psnr
@@ -404,30 +476,25 @@ class To_aomav1(Operation):
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
 
-		append_line(self.op_source, string="doing: " + str(crf))
-
-		aomav1_command =  ["ffmpeg", "-i", self.op_source]
-		aomav1_command += ["-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
-		aomav1_command += ["-c:a", "libopus", "-b:a", "128k"]
-		aomav1_command += [self.op_destination]
-		aomav1_result = print_run(aomav1_command, capture_output=True)
+		append_line(self.op_info, string="doing: " + str(crf))
+		aomav1_result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, self.crf).run(capture_output=True)
 
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+aomav1_result.stdout+aomav1_result.stderr)
 		# detect error
 
-		psnr = float("nan")
-		vmaf = float("nan")
+		psnr = float("+inf")
+		vmaf = float("+inf")
 		if (self.path.stat().st_size < self.op_destination.stat().st_size):
 			append_line(self.op_info, string="bigger than source")
 		else:
-			ffmpeg_psnr = cmd_ffmpeg_psnr(self.op_source, self.op_destination)
+			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
 
-		if (psnr >= self.psnr_min):
-			ffmpeg_vmaf = cmd_ffmpeg_vmaf(self.op_source, self.op_destination)
+		if (psnr >= self.psnr_min) and (math.isfinite(psnr)):
+			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 		
@@ -449,8 +516,8 @@ class Copy(Operation):
 		return path
 	def run(self):
 		if (self.path.is_file()):
-			print_run(["mkdir", "-p", self.outdir])
-			print_run(["mv", self.path, self.outdir])
+			os.makedirs(self.outdir, exist_ok=True)
+			os.rename(self.path, self.outdir / self.path.name)
 			return True
 
 		return False
@@ -459,7 +526,7 @@ class In_types:
 	def __init__(self):
 		self.path    = Path()
 		self.outdir  = Path()
-		self.tempdir = tempfile.TemporaryDirectory()
+		self.tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
 
 class Folder(In_types):
 	def set(self, path:Path):
@@ -470,15 +537,15 @@ class Folder(In_types):
 			return False
 
 		self.path = Path(self.tempdir.name) / path.name
-		print_run(["mv", path, self.path])
+		os.rename(path, self.path)
 
 		self.outdir = OUT / "folder"
 		return True
 	def run(self):
 		product = self.path.with_suffix(".7z")
-		print_run(["7za", "a", "-t7z", "-m0=lzma2", "-mx=9", "-mfb=273", "-md=29", "-ms=8g", "-mmt=off", "-mmtf=off", "-mqs=on", "-bt", "-bb3", product, self.path])
-		print_run(["mkdir", "-p", self.outdir])
-		print_run(["mv", product, self.outdir])
+		Cmd_7za().set(self.path, product).run()
+		os.makedirs(self.outdir, exist_ok=True)
+		os.rename(product, self.outdir / product.name)
 
 class File(In_types):
 	def outCollision(self):
@@ -520,8 +587,7 @@ class File(In_types):
 		if (self.outCollision()):
 			return False
 
-		print_run(["mv", path, self.path])
-
+		os.rename(path, self.path)
 
 		return True
 
@@ -568,7 +634,7 @@ class Other(File):
 		if (self.outCollision()):
 			return False
 
-		print_run(["mv", path, self.path])
+		os.rename(path, self.path)
 
 		return True
 	def operations(self):
@@ -581,12 +647,12 @@ class Jpeg(Image):
 	def suffixes(self):
 		return {".jpg", ".jpeg"}
 	def preRun(self):
-		print_run(["jpegoptim", self.path])
+		Jpegoptim().set(self.path).run()
 class Png(Image):
 	def suffixes(self):
 		return {".png"}
 	def preRun(self):
-		print_run(["optipng", "-o7", self.path])
+		Optipng().set(self.path).run()
 class Png_hq(Png):
 	def suffixes(self):
 		return {".hq.png"}
@@ -621,15 +687,10 @@ class Transcode:
 	def __init__(self):
 		self.datatype = Other()
 	def set(self, path:Path):
-
-		for i in [
-			Folder(),
-			Jpeg(), Png(), Png_hq(),
-			Avi(), Mkv(), Mov(), Mp4(), Webm(),
-			Other()
-		]:
-			if (i.set(path)):
-				self.datatype = i
+		for i in [Folder] + Image.__subclasses__() + Video.__subclasses__() + [Other]:
+			datatype = i()
+			if (datatype.set(path)):
+				self.datatype = datatype
 				return True
 		print("Already exists in out/other:", path)
 		return False
@@ -657,10 +718,20 @@ def multiplexer(lock_media, lock_folder):
 		time.sleep(10)
 
 if __name__ == "__main__":
-	print_run(["mkdir", "-p", IN_FOLDER])
-	print_run(["mkdir", "-p", IN_MEDIA])
-	print_run(["mkdir", "-p", "in/user-private"])
-	print_run(["mkdir", "-p", STATS_CSV])
+	for i in Command.__subclasses__():
+		cmd = i()
+		if (not cmd.exec_exists()):
+			print("Missing:", cmd.execName)
+			exit(1)
+
+	os.makedirs(IN_FOLDER,         exist_ok=True)
+	os.makedirs(IN_MEDIA,          exist_ok=True)
+	os.makedirs("in/user-private", exist_ok=True)
+	os.makedirs(STATS_CSV,         exist_ok=True)
+
+	shutil.rmtree(LOCAL_TMP)
+	os.makedirs(LOCAL_TMP,         exist_ok=True)
+	
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
