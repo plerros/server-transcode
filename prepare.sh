@@ -6,8 +6,8 @@ rmdir /exports/out
 rm /exports/in
 rm /exports/out
 
-mkdir -p /root/in
-mkdir -p /root/out
+mkdir -p root/in
+mkdir -p root/out
 
 ln -s "$(pwd)/root/in"  /exports/in
 ln -s "$(pwd)/root/out" /exports/out

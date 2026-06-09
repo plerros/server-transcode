@@ -239,7 +239,8 @@ class Operation():
 		ret = self.run_internal()
 		os.makedirs(self.outdir, exist_ok=True)
 		for i in [self.op_destination, self.op_info, self.op_log]:
-			os.rename(i, self.outdir / i.name)
+			if (i.is_file()):
+				os.rename(i, self.outdir / i.name)
 		return ret
 
 class To_avif(Operation):
@@ -401,11 +402,89 @@ class To_vaav1(Operation):
 		self.run_internal()
 	def run_internal(self):
 		# test for gpu support
+
+		stat_inType = self.path.suffix
+		stat_inSize = self.path.stat().st_size
+
 		# brentq
+		try:
+			print("[exec  ]", root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.1, maxiter=int(math.log(256,2))))
+		except ValueError:
+			return False
+		
 		# best
-		return False
+		best = None
+		for i in self.cache:
+			j = self.cache[i]
+			if (self.path.stat().st_size < len(j.outBytes)):
+				continue
+			if (j.psnr < self.psnr_min):
+				continue
+			if (j.vmaf < self.vmaf_min):
+				continue
+
+			if (not best):
+				best = j
+			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
+				best = j
+
+		ret = True
+	
+		stat_q     = ""
+		stat_outSize = ""
+		stat_psnr    = ""
+		stat_vmaf    = ""
+		stat_y       = ""
+		if (best):
+			write_binary_file(self.op_destination, best.outBytes)
+			append_line(self.op_info, string="best: "+str(best.q)+" "+str(best.psnr)+" "+str(best.vmaf))
+			stat_q       = best.q
+			stat_outSize = len(best.outBytes)
+			stat_psnr    = best.psnr
+			stat_vmaf    = best.vmaf
+			stat_y       = best.y
+		else:
+			print("[info  ]", "best not found")
+			ret = False
+
+		append_line(STATS_CSV / "to_vaav1.csv", csv=[stat_inType, stat_inSize, stat_q, stat_outSize, stat_psnr, stat_vmaf, stat_y])
+		return ret
+
 	def run_operation(self, q: int):
 		q = int(q)
+		input_hash = str(Cache_vaav1(read_binary_file(self.op_source), q, None, None, None, None))
+
+		if (self.cache.get(input_hash)):
+			return (self.cache.get(input_hash)).y
+
+		append_line(self.op_info, string="doing: " + str(q))
+		vaav1_result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run(capture_output=True)
+
+		append_line(self.op_info, string="done")
+		write_binary_file(self.op_log, b''+vaav1_result.stdout+vaav1_result.stderr)
+		# detect error
+
+		psnr = float("+inf")
+		vmaf = float("+inf")
+		if (self.path.stat().st_size < self.op_destination.stat().st_size):
+			append_line(self.op_info, string="bigger than source")
+		else:
+			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
+			ffmpeg_psnr.run()
+			psnr = ffmpeg_psnr.psnr()
+			append_line(self.op_info, string="psnr " + str(psnr))
+
+		if (psnr >= self.psnr_min) and (math.isfinite(psnr)):
+			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
+			ffmpeg_vmaf.run()
+			vmaf = ffmpeg_vmaf.vmaf()
+		
+		y = vmaf - self.vmaf_target
+
+		# Store results to cache
+		self.cache[input_hash] = Cache_vaav1(read_binary_file(self.op_source), q, read_binary_file(self.op_destination), psnr, vmaf, y)
+		self.op_destination.unlink()
+		return y
 
 class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
