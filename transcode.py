@@ -19,6 +19,33 @@ OUT          = ROOT / "out"
 STATS_CSV    = ROOT / "stats/csv"
 LOCAL_TMP    = ROOT / "tmp"
 
+def Bold(string: str):
+	return ("\033[1m"  + string + "\033[0m")
+def Green(string: str):
+	return ("\033[92m" + string + "\033[0m")
+def Red(string: str):
+	return ("\033[91m" + string + "\033[0m")
+def Yellow(string: str):
+	return ("\033[93m" + string + "\033[0m")
+
+class msg:
+	def __init__(self, indicator="", effects=[]):
+		for i in effects:
+			indicator = i(indicator)
+		self.indicator = indicator
+	def print(self, string):
+		print(self.indicator, string, flush=True)
+	def string(self, string):
+		return (self.indicator + " " + string)
+
+msg_cmd    = msg("[ cmd  ]", [Bold])
+msg_error  = msg("[error ]", [Bold, Red])
+msg_exec   = msg("[ exec ]", [Bold, Green])
+msg_info   = msg("[ info ]", [Bold, Yellow])
+msg_status = msg("[status]")
+msg_stdout = msg("[stdout]", [Bold])
+msg_stderr = msg("[stderr]", [Bold])
+
 def grep(pattern: re.Pattern, string: str):
 	result = re.search(pattern, string)
 	if (not result):
@@ -31,7 +58,7 @@ def append_line(file_path: str, string="", csv=[]) -> None:
 	for i in csv:
 		line += ","+str(i)
 
-	print("[info  ]", line)
+	msg_info.print(line)
 	with open(file_path, mode='a', encoding='utf-8') as f:
 		f.write(line+"\n")
 
@@ -43,6 +70,28 @@ def write_binary_file(path: str, data: bytes) -> None:
 	with open(path, "wb") as f:
 		f.write(data)
 
+# Globally accessible mapping to denote if an object is fully functional
+class Functional():
+	def __init__(self):
+		self.values: dict[type, bool] = {}
+	def is_True(self, obj):
+		tmp = self.values.get(type(obj).__name__)
+		if (tmp is None):
+			return False
+		return tmp
+	def is_False(self, obj):
+		tmp = self.values.get(type(obj).__name__)
+		if (tmp is None):
+			return False
+		return (not tmp)
+	def is_None(self, obj):
+		tmp = self.values.get(type(obj).__name__)
+		return (tmp is None)
+	def set(self, obj, value: bool):
+		self.values[type(obj).__name__] = value
+
+functional = Functional()
+
 class Command():
 	def __init__(self, execName):
 		self.execName = execName
@@ -51,14 +100,56 @@ class Command():
 		self.args = args
 	def run(self, capture_output=False):
 		strings = [self.execName] + [str(i) for i in self.args]
-		print("[exec  ]", strings)
-		result = subprocess.run(strings, capture_output=capture_output)
+		msg_exec.print(strings)
+		result = subprocess.run(strings, capture_output=capture_output, check=True)
 		if (capture_output):
-			print("[exec  ]", result.stdout.decode('utf‑8'))
-			print("[exec  ]", result.stderr.decode('utf‑8'))
+			tmp = result.stdout.decode('utf‑8')
+			if (tmp != ""):
+				msg_stdout.print(tmp)
+			tmp = result.stderr.decode('utf‑8')
+			if (tmp != ""):
+				msg_stderr.print(tmp)
 		return result
-	def exec_exists(self):
-		return (shutil.which(self.execName) is not None)
+	def check_dependencies(self):
+		return ""
+	def check_exec_exists(self):
+		ret = ""
+		if (not functional.is_None(self)):
+			return ret
+
+		if (shutil.which(self.execName) is None):
+			ret = "missing executable"
+			functional.set(self, False)
+		else:
+			ret = self.execName + " INSTALLED"
+
+		return ret
+	def check_exec_args(self):
+		return ""
+	def works_str(self, print_out=True):
+		string = ""
+		try:		
+			string += self.check_dependencies()
+			string += self.check_exec_exists()
+			string += self.check_exec_args()
+		except subprocess.CalledProcessError:
+			functional.set(self, False)
+
+		if (functional.is_None(self)):
+			functional.set(self, True)
+
+		msg_type = msg_error
+		if (functional.is_True(self)):
+			msg_type = msg_info
+			string = "OK"
+	
+		if (print_out):
+			msg_type.print(type(self).__name__ + " " + string)
+		return msg_type.string(type(self).__name__ + " " + string)
+	
+	def works(self):
+		self.works_str(print_out=False)
+		return functional.is_True(self)
 
 class Avifenc(Command):
 	def __init__(self):
@@ -66,6 +157,12 @@ class Avifenc(Command):
 	def set(self, source: Path, destination: Path, yuv, q):
 		super().set(["-j", "8", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
+	def check_dependencies(self):
+		ret = ""
+		if (not Ffmpeg_psnr().works()):
+			functional.set(self, False)
+		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+		return ret
 
 class Cmd_7za(Command):
 	def __init__(self):
@@ -87,6 +184,15 @@ class Ffmpeg_aomav1(Command):
 	def set(self, source: Path, destination: Path, crf):
 		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
 		return self
+	def check_dependencies(self):
+		ret = ""
+		if (not Ffmpeg_psnr().works()):
+			functional.set(self, False)
+		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+		if (not Ffmpeg_vmaf().works()):
+			functional.set(self, False)
+		ret += "\n\t" + Ffmpeg_vmaf().works_str(print_out = False)
+		return ret
 
 class Ffmpeg_psnr(Command):
 	def __init__(self):
@@ -109,28 +215,91 @@ class Ffmpeg_psnr(Command):
 
 		return float(finite)
 
+class Ffmpeg_random(Command):
+	def __init__(self):
+		super().__init__("ffmpeg")
+	def set(self, path:Path):
+		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
+		return self
+
 class Ffmpeg_vaav1(Command):
 	def __init__(self):
 		super().__init__("ffmpeg")
 	def set(self, source: Path, destination: Path, q):
-		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "'format=nv12,hwupload'", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
+		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
+		self.stderr = ""
 		return self
+	def run(self, capture_output=False):
+		result = super().run(capture_output=True)
+		self.stderr = result.stderr.decode('utf-8')
+		return result
+	def check_dependencies(self):
+		ret = ""
+		if (not Ffmpeg_psnr().works()):
+			functional.set(self, False)
+		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+		if (not Ffmpeg_vmaf().works()):
+			functional.set(self, False)
+		ret += "\n\t" + Ffmpeg_vmaf().works_str(print_out = False)
+		return ret
+	def check_exec_args(self):
+		ret = ""
+		if (not functional.is_None(self)):
+			return ret
+		if (not Ffmpeg_random().works()):
+			functional.set(Ffmpeg_random, False)
+			return ret
+
+		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		random_in  = Path(tempdir.name) / "random.mp4"
+		random_out = Path(tempdir.name) / "random.mkv"
+		Ffmpeg_random().set(random_in).run()
+		self.set(random_in, random_out, 20)
+		self.run()
+		tmp_re = grep(r'No usable encoding profile found', self.stderr)
+		if (tmp_re):
+			functional.set(self, False)
+			msg_error.print("ffmpeg doesn't support vaav1")
+		else:
+			msg_info.print(self.execName + " -vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v av1_vaapi OK",)
+		return ret
 
 class Ffmpeg_vmaf(Command):
 	def __init__(self):
 		super().__init__("ffmpeg")
 	def set(self, original: Path, transcoded: Path):
 		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
-		self.stderr     = ""
+		self.stderr = ""
 		return self
 	def run(self, capture_output=False):
 		result = super().run(capture_output=True)
 		self.stderr = result.stderr.decode('utf-8')
 		return result
 	def vmaf(self):
-		tmp_re    = grep(r'VMAF.*'        , self.stderr)
-		tmp_re    = grep(r'[0-9]*\.[0-9]*', tmp_re)
+		tmp_re = grep(r'VMAF.*'        , self.stderr)
+		tmp_re = grep(r'[0-9]*\.[0-9]*', tmp_re)
 		return float(tmp_re)
+	def check_exec_args(self):
+		ret = ""
+		if (not functional.is_None(self)):
+			return ret
+
+		if (not Ffmpeg_random().works()):
+			functional.set(Ffmpeg_random, False)
+			return ret
+
+		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		random = Path(tempdir.name) / "random.mp4"
+		Ffmpeg_random().set(random).run()
+		self.set(random, random)
+		self.run()
+		tmp_re = grep(r'No such filter: \'libvmaf\'', self.stderr)
+		if (tmp_re):
+			functional.set(self, False)
+			msg_error.print("ffmpeg doesn't support libvmaf")
+		else:
+			msg_info.print(self.execName + "-lavfi libvmaf OK")
+		return ret
 
 class Jpegoptim(Command):
 	def __init__(self):
@@ -189,7 +358,7 @@ class Cache_vaav1:
 	def __str__(self):
 		ret =  "{"
 		ret +=    "inBytes: " + str(self.inBytes)
-		ret +=    "crf: "     + str(self.crf)
+		ret +=    "q: "       + str(self.q)
 		ret += "}"
 		return ret
 
@@ -205,12 +374,13 @@ class Cache_aomav1:
 	def __str__(self):
 		ret =  "{"
 		ret +=    "inBytes: " + str(self.inBytes)
-		ret +=    "q: "       + str(self.q)
+		ret +=    "crf: "     + str(self.crf)
 		ret += "}"
 		return ret
 
 class Operation():
-	def __init__(self, path, outdir):
+	def __init__(self, dependencies, path, outdir):
+		self.dependencies = dependencies
 		self.path   = path
 		self.outdir = outdir
 
@@ -236,7 +406,15 @@ class Operation():
 		return False
 
 	def run(self):
-		ret = self.run_internal()
+		for i in self.dependencies:
+			if(not i().works()):
+				return 
+		
+		try:
+			ret = self.run_internal()
+		except subprocess.CalledProcessError:
+			ret = False
+
 		os.makedirs(self.outdir, exist_ok=True)
 		for i in [self.op_destination, self.op_info, self.op_log]:
 			if (i.is_file()):
@@ -245,7 +423,7 @@ class Operation():
 
 class To_avif(Operation):
 	def __init__(self, path: Path, outdir: Path, psnr_min, psnr_target):
-		super().__init__(path, outdir)
+		super().__init__([Avifenc, Exiftool_orientation, Magick_convert, Magick_mogrify_autoorient], path, outdir)
 
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
@@ -283,7 +461,7 @@ class To_avif(Operation):
 			append_line(self.op_info, string="\n" + "YUV " + i)
 
 			try:
-				print("[exec  ]", root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
+				msg_info.print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=int(math.log(100,2))))
 			except ValueError:
 				failures += 1
 
@@ -321,7 +499,7 @@ class To_avif(Operation):
 			stat_psnr    = best.psnr
 			stat_y       = best.y
 		else:
-			print("[info  ]", "best not found")
+			msg_error.print("best not found")
 			ret = False
 
 		append_line(STATS_CSV / "to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
@@ -352,19 +530,22 @@ class To_avif(Operation):
 		# MC, Matrix Coefficients
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
-		avif_result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)	
-
-		# Unsupported filetype
-		# should run only once, since we're overwriting the op_source path
-		if (grep(r'Unrecognized file format for input file: ', avif_result.stderr.decode('utf-8'))):
-			tmp = self.op_source.with_suffix(".png")
-			Magick_convert().set(self.op_source, tmp).run()
-			self.op_source = tmp
-			input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
-			avif_result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)
+		result = None
+		try:
+			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)	
+		except subprocess.CalledProcessError as e:
+			# Try conversion to .png:
+			if (grep(r'Unrecognized file format for input file: ', e.stderr.decode('utf-8'))):
+				tmp = self.op_source.with_suffix(".png")
+				Magick_convert().set(self.op_source, tmp).run()
+				self.op_source = tmp
+				input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
+				result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)
+			else:
+				raise
 
 		append_line(self.op_info, string="done")
-		write_binary_file(self.op_log, b''+avif_result.stdout+avif_result.stderr)
+		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 
 		# compare against original
 		psnr = float("+inf")
@@ -385,7 +566,7 @@ class To_avif(Operation):
 
 class To_vaav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
-		super().__init__(path, outdir)
+		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
@@ -406,7 +587,7 @@ class To_vaav1(Operation):
 
 		# brentq
 		try:
-			print("[exec  ]", root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.1, maxiter=int(math.log(256,2))))
+			msg_info.print(root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.1, maxiter=int(math.log(256,2))))
 		except ValueError:
 			return False
 		
@@ -442,7 +623,7 @@ class To_vaav1(Operation):
 			stat_vmaf    = best.vmaf
 			stat_y       = best.y
 		else:
-			print("[info  ]", "best not found")
+			msg_info.print("best not found")
 			ret = False
 
 		append_line(STATS_CSV / "to_vaav1.csv", csv=[stat_inType, stat_inSize, stat_q, stat_outSize, stat_psnr, stat_vmaf, stat_y])
@@ -456,10 +637,9 @@ class To_vaav1(Operation):
 			return (self.cache.get(input_hash)).y
 
 		append_line(self.op_info, string="doing: " + str(q))
-		vaav1_result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run(capture_output=True)
-
+		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run(capture_output=True)
 		append_line(self.op_info, string="done")
-		write_binary_file(self.op_log, b''+vaav1_result.stdout+vaav1_result.stderr)
+		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
 		psnr = float("+inf")
@@ -476,6 +656,7 @@ class To_vaav1(Operation):
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
+			append_line(self.op_info, string="vmaf " + str(vmaf))
 		
 		y = vmaf - self.vmaf_target
 
@@ -486,7 +667,7 @@ class To_vaav1(Operation):
 
 class To_aomav1(Operation):
 	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
-		super().__init__(path, outdir)
+		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
 
 		self.psnr_min    = psnr_min
 		self.psnr_target = psnr_target
@@ -506,7 +687,7 @@ class To_aomav1(Operation):
 
 		# brentq
 		try:
-			print("[exec  ]", root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
+			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
 		except ValueError:
 			return False
 		
@@ -542,7 +723,7 @@ class To_aomav1(Operation):
 			stat_vmaf    = best.vmaf
 			stat_y       = best.y
 		else:
-			print("[info  ]", "best not found")
+			msg_error.print("best not found")
 			ret = False
 
 		append_line(STATS_CSV / "to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
@@ -556,10 +737,9 @@ class To_aomav1(Operation):
 			return (self.cache.get(input_hash)).y
 
 		append_line(self.op_info, string="doing: " + str(crf))
-		aomav1_result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run(capture_output=True)
-
+		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run(capture_output=True)
 		append_line(self.op_info, string="done")
-		write_binary_file(self.op_log, b''+aomav1_result.stdout+aomav1_result.stderr)
+		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
 		psnr = float("+inf")
@@ -576,6 +756,7 @@ class To_aomav1(Operation):
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
+			append_line(self.op_info, string="vmaf " + str(vmaf))
 		
 		y = vmaf - self.vmaf_target
 
@@ -586,7 +767,7 @@ class To_aomav1(Operation):
 
 class Copy(Operation):
 	def __init__(self, path: Path, outdir: Path):
-		super().__init__(path, outdir)
+		super().__init__([], path, outdir)
 	def outSuffix(self, path):
 		return path
 	def infoSuffix(self, path):
@@ -771,7 +952,7 @@ class Transcode:
 			if (datatype.set(path)):
 				self.datatype = datatype
 				return True
-		print("[error ]", "Already exists in out/other:", path)
+		msg_error.print("Already exists in out/other: " + path)
 		return False
 
 	def run(self):
@@ -797,14 +978,10 @@ def multiplexer(lock_media, lock_folder):
 		time.sleep(10)
 
 if __name__ == "__main__":
-	print("[status]", "launching")
+	msg_status.print("launching")
 	for i in Command.__subclasses__():
-		cmd = i()
-		if (not cmd.exec_exists()):
-			print("Missing:", cmd.execName)
-			exit(1)
-
-	print("[status]", "checks OK")
+		i().works_str()
+	msg_status.print("checks OK")
 
 	os.makedirs(USER_PRIVATE, exist_ok=True)
 	os.makedirs(IN_FOLDER,    exist_ok=True)
@@ -823,4 +1000,4 @@ if __name__ == "__main__":
 	for p in processes:
 		p.join()
 
-	print("[status]", "exiting")
+	msg_status.print("exiting")
