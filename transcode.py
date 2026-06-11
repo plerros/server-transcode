@@ -205,7 +205,7 @@ class Cache_aomav1:
 	def __str__(self):
 		ret =  "{"
 		ret +=    "inBytes: " + str(self.inBytes)
-		ret +=    "crf: "     + str(self.crf)
+		ret +=    "q: "       + str(self.q)
 		ret += "}"
 		return ret
 
@@ -398,8 +398,6 @@ class To_vaav1(Operation):
 		return path.with_suffix(".vaav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
-	def run(self):
-		self.run_internal()
 	def run_internal(self):
 		# test for gpu support
 
