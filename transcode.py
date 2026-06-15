@@ -1,5 +1,4 @@
-
-
+import argparse
 import math
 import multiprocessing
 import os
@@ -19,8 +18,13 @@ OUT          = ROOT / "out"
 STATS_CSV    = ROOT / "stats/csv"
 LOCAL_TMP    = ROOT / "tmp"
 
+lock_stdout = multiprocessing.Lock()
+lock_gpu    = multiprocessing.Lock()
+
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
+def Cyan(string: str):
+	return ("\033[96m" + string + "\033[0m")
 def Green(string: str):
 	return ("\033[92m" + string + "\033[0m")
 def Red(string: str):
@@ -30,15 +34,29 @@ def Yellow(string: str):
 
 class msg:
 	def __init__(self, indicator="", effects=[]):
-		for i in effects:
-			indicator = i(indicator)
 		self.indicator = indicator
+		self.effects   = effects
+	def apply_effects(self, string):
+		for i in self.effects:
+			string = i(string)
+		return string
 	def print(self, string):
-		print(self.indicator, string, flush=True)
-	def string(self, string):
-		return (self.indicator + " " + string)
+		self.string(string, print_out=True)
+	def string(self, string, print_out=False):
+		indicator = self.apply_effects(self.indicator)
+		indicator_length = len(self.indicator)
+		string = str(string)
 
-msg_cmd    = msg("[ cmd  ]", [Bold])
+		indicator2 = (indicator_length) * ' '
+		ret = ""
+		for i in string.splitlines():
+			ret += indicator + " " + i + "\n"
+			indicator = indicator2
+		if (print_out):
+			with lock_stdout:
+				print(ret, end='', flush=True)
+		return (ret)
+
 msg_error  = msg("[error ]", [Bold, Red])
 msg_exec   = msg("[ exec ]", [Bold, Green])
 msg_info   = msg("[ info ]", [Bold, Yellow])
@@ -98,40 +116,39 @@ class Command():
 		self.args     = []
 	def set(self, args):
 		self.args = args
-	def run(self, capture_output=False):
+	def run(self):
 		strings = [self.execName] + [str(i) for i in self.args]
-		msg_exec.print(strings)
-		result = subprocess.run(strings, capture_output=capture_output, check=True)
-		if (capture_output):
-			tmp = result.stdout.decode('utf‑8')
-			if (tmp != ""):
-				msg_stdout.print(tmp)
-			tmp = result.stderr.decode('utf‑8')
-			if (tmp != ""):
-				msg_stderr.print(tmp)
+		msg_exec.print(' '.join(strings))
+		result = subprocess.run(strings, capture_output=True, check=True)
+		tmp = result.stdout.decode('utf‑8')
+		if (tmp != ""):
+			msg_stdout.print(tmp)
+		tmp = result.stderr.decode('utf‑8')
+		if (tmp != ""):
+			msg_stderr.print(tmp)
 		return result
 	def check_dependencies(self):
 		return ""
 	def check_exec_exists(self):
 		ret = ""
-		if (not functional.is_None(self)):
-			return ret
-
 		if (shutil.which(self.execName) is None):
-			ret = "missing executable"
+			ret = msg_error.string("executable " + self.execName + " missing")
 			functional.set(self, False)
-		else:
-			ret = self.execName + " INSTALLED"
-
 		return ret
 	def check_exec_args(self):
 		return ""
-	def works_str(self, print_out=True):
+	def works_str(self):
 		string = ""
-		try:		
-			string += self.check_dependencies()
-			string += self.check_exec_exists()
-			string += self.check_exec_args()
+		print_out = False
+		if (functional.is_None(self)):
+			print_out = True
+		if (functional.is_False(self)):
+			string = "failed earlier"
+		try:
+			for i in [self.check_dependencies, self.check_exec_exists, self.check_exec_args]:
+				if (not functional.is_None(self)):
+					break
+				string += i()
 		except subprocess.CalledProcessError:
 			functional.set(self, False)
 
@@ -143,12 +160,10 @@ class Command():
 			msg_type = msg_info
 			string = "OK"
 	
-		if (print_out):
-			msg_type.print(type(self).__name__ + " " + string)
-		return msg_type.string(type(self).__name__ + " " + string)
+		return msg_type.string(type(self).__name__ + ": " + string, print_out=print_out)
 	
 	def works(self):
-		self.works_str(print_out=False)
+		self.works_str()
 		return functional.is_True(self)
 
 class Avifenc(Command):
@@ -158,10 +173,10 @@ class Avifenc(Command):
 		super().set(["-j", "8", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
 	def check_dependencies(self):
-		ret = ""
+		ret = "\n"
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
-		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+			ret += Ffmpeg_psnr().works_str()
 		return ret
 
 class Cmd_7za(Command):
@@ -185,13 +200,13 @@ class Ffmpeg_aomav1(Command):
 		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
 		return self
 	def check_dependencies(self):
-		ret = ""
+		ret = "\n"
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
-		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+			ret +=  Ffmpeg_psnr().works_str()
 		if (not Ffmpeg_vmaf().works()):
 			functional.set(self, False)
-		ret += "\n\t" + Ffmpeg_vmaf().works_str(print_out = False)
+			ret += Ffmpeg_vmaf().works_str()
 		return ret
 
 class Ffmpeg_psnr(Command):
@@ -199,10 +214,9 @@ class Ffmpeg_psnr(Command):
 		super().__init__("ffmpeg")
 	def set(self, original: Path, transcoded: Path):
 		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
-		self.stderr     = ""
 		return self
-	def run(self, capture_output=False):
-		result = super().run(capture_output=True)
+	def run(self):
+		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
 		return result
 	def psnr(self):
@@ -229,23 +243,23 @@ class Ffmpeg_vaav1(Command):
 		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
 		self.stderr = ""
 		return self
-	def run(self, capture_output=False):
-		result = super().run(capture_output=True)
+	def run(self):
+		with lock_gpu:
+			result = super().run()
+
 		self.stderr = result.stderr.decode('utf-8')
 		return result
 	def check_dependencies(self):
-		ret = ""
+		ret = "\n"
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
-		ret += "\n\t" + Ffmpeg_psnr().works_str(print_out = False)
+			ret += Ffmpeg_psnr().works_str()
 		if (not Ffmpeg_vmaf().works()):
 			functional.set(self, False)
-		ret += "\n\t" + Ffmpeg_vmaf().works_str(print_out = False)
+			ret += Ffmpeg_vmaf().works_str()
 		return ret
 	def check_exec_args(self):
 		ret = ""
-		if (not functional.is_None(self)):
-			return ret
 		if (not Ffmpeg_random().works()):
 			functional.set(Ffmpeg_random, False)
 			return ret
@@ -261,7 +275,7 @@ class Ffmpeg_vaav1(Command):
 			functional.set(self, False)
 			msg_error.print("ffmpeg doesn't support vaav1")
 		else:
-			msg_info.print(self.execName + " -vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v av1_vaapi OK",)
+			msg_info.print(self.execName + " -vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v av1_vaapi OK")
 		return ret
 
 class Ffmpeg_vmaf(Command):
@@ -271,8 +285,8 @@ class Ffmpeg_vmaf(Command):
 		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
 		self.stderr = ""
 		return self
-	def run(self, capture_output=False):
-		result = super().run(capture_output=True)
+	def run(self):
+		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
 		return result
 	def vmaf(self):
@@ -281,9 +295,6 @@ class Ffmpeg_vmaf(Command):
 		return float(tmp_re)
 	def check_exec_args(self):
 		ret = ""
-		if (not functional.is_None(self)):
-			return ret
-
 		if (not Ffmpeg_random().works()):
 			functional.set(Ffmpeg_random, False)
 			return ret
@@ -292,13 +303,13 @@ class Ffmpeg_vmaf(Command):
 		random = Path(tempdir.name) / "random.mp4"
 		Ffmpeg_random().set(random).run()
 		self.set(random, random)
-		self.run()
-		tmp_re = grep(r'No such filter: \'libvmaf\'', self.stderr)
-		if (tmp_re):
+
+		try:
+			self.run()
+		except subprocess.CalledProcessError:
+			ret = "ffmpeg doesn't support libvmaf"
 			functional.set(self, False)
-			msg_error.print("ffmpeg doesn't support libvmaf")
-		else:
-			msg_info.print(self.execName + "-lavfi libvmaf OK")
+
 		return ret
 
 class Jpegoptim(Command):
@@ -442,7 +453,7 @@ class To_avif(Operation):
 
 		# rotation
 		stat_rotated = False
-		result = Exiftool_orientation().set(self.op_source).run(capture_output=True)
+		result = Exiftool_orientation().set(self.op_source).run()
 		if (grep(r'Rotate', result.stdout.decode('utf‑8'))):
 			rotated = self.op_source.with_suffix(".rotated" + self.op_source.suffix)
 			shutil.copyfile(self.op_source, rotated)
@@ -481,7 +492,6 @@ class To_avif(Operation):
 				best = j
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
-
 
 		ret = True
 
@@ -532,7 +542,7 @@ class To_avif(Operation):
 
 		result = None
 		try:
-			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)	
+			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()	
 		except subprocess.CalledProcessError as e:
 			# Try conversion to .png:
 			if (grep(r'Unrecognized file format for input file: ', e.stderr.decode('utf-8'))):
@@ -540,7 +550,7 @@ class To_avif(Operation):
 				Magick_convert().set(self.op_source, tmp).run()
 				self.op_source = tmp
 				input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
-				result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run(capture_output=True)
+				result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()
 			else:
 				raise
 
@@ -637,7 +647,7 @@ class To_vaav1(Operation):
 			return (self.cache.get(input_hash)).y
 
 		append_line(self.op_info, string="doing: " + str(q))
-		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run(capture_output=True)
+		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run()
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
@@ -737,7 +747,7 @@ class To_aomav1(Operation):
 			return (self.cache.get(input_hash)).y
 
 		append_line(self.op_info, string="doing: " + str(crf))
-		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run(capture_output=True)
+		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run()
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
@@ -959,6 +969,7 @@ class Transcode:
 		self.datatype.run()
 
 def multiplexer(lock_media, lock_folder):
+	msg_status.print("Thread launched")
 	while (True):
 		transcode = Transcode()
 		with lock_folder:
@@ -977,12 +988,24 @@ def multiplexer(lock_media, lock_folder):
 		transcode.run()
 		time.sleep(10)
 
-if __name__ == "__main__":
-	msg_status.print("launching")
+def check_environment(args):
+	working = 0
+	total   = len(Command.__subclasses__())
 	for i in Command.__subclasses__():
-		i().works_str()
-	msg_status.print("checks OK")
+		working += i().works()
+	
+	msg_status.print(str(working) + "/" + str(total) + " components working")
+	if ((working < total) and (not args.nofail)):
+		msg_status.print(Bold("use --nofail to ignore"))
+		return False
+	return True
 
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--nofail', action='store_true', help="Ignore errors, partial functionality.")
+	args = parser.parse_args()
+
+	msg_status.print("launching")
 	os.makedirs(USER_PRIVATE, exist_ok=True)
 	os.makedirs(IN_FOLDER,    exist_ok=True)
 	os.makedirs(IN_MEDIA,     exist_ok=True)
@@ -995,9 +1018,11 @@ if __name__ == "__main__":
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
-	for p in processes:
-		p.start()
-	for p in processes:
-		p.join()
+
+	if (check_environment(args)):
+		for p in processes:
+			p.start()
+		for p in processes:
+			p.join()
 
 	msg_status.print("exiting")
