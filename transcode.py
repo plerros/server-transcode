@@ -170,7 +170,7 @@ class Avifenc(Command):
 	def __init__(self):
 		super().__init__("avifenc")
 	def set(self, source: Path, destination: Path, yuv, q):
-		super().set(["-j", "8", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
+		super().set(["-j", "1", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
 	def check_dependencies(self):
 		ret = "\n"
