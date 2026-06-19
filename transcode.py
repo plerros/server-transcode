@@ -6,6 +6,7 @@ from   pathlib import Path
 import re
 from   scipy.optimize import root_scalar
 import shutil
+import signal
 import subprocess
 import tempfile
 import time
@@ -119,7 +120,7 @@ class Command():
 	def run(self):
 		strings = [self.execName] + [str(i) for i in self.args]
 		msg_exec.print(' '.join(strings))
-		result = subprocess.run(strings, capture_output=True, check=True)
+		result = subprocess.run(strings, capture_output=True, check=True, start_new_session=True)
 		tmp = result.stdout.decode('utf‑8')
 		if (tmp != ""):
 			msg_stdout.print(tmp)
@@ -798,12 +799,20 @@ class In_types:
 		self.outdir  = Path()
 		self.tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
 
+class nop(In_types):
+	def run(self):
+		return True
+
 class Folder(In_types):
-	def set(self, path:Path):
+	def compatible(self, path:Path):
 		if (not path.is_dir()):
 			return False
-
 		if (not path.is_relative_to(IN_FOLDER)):
+			return False
+		return True
+
+	def set(self, path:Path):
+		if (not self.compatible(path)):
 			return False
 
 		self.path = Path(self.tempdir.name) / path.name
@@ -833,20 +842,23 @@ class File(In_types):
 				return True
 		return False
 
-	def set(self, path:Path):
+	def compatible(self, path:Path):
 		if (not path.is_file()):
 			return False
 
-		# Compatible suffix
-		is_compatible = False
+		ret = False
 		compatible_suffixes = self.suffixes()
 		for i in self.suffixes():
 			compatible_suffixes.add(str.upper(i))
 		suffixes = path.suffixes
 		for idx, x in enumerate(path.suffixes):
 			if (''.join(str(i) for i in suffixes[idx:None])) in compatible_suffixes:
-				is_compatible = True
-		if (not is_compatible):
+				return True
+		return ret
+
+	def set(self, path:Path):
+		# Compatible suffix
+		if (not self.compatible(path)):
 			return False
 
 		# Late initialization
@@ -955,38 +967,66 @@ class Wmv(Video):
 
 class Transcode:
 	def __init__(self):
-		self.datatype = Other()
+		self.datatype = nop()
 	def set(self, path:Path):
-		for i in [Folder] + Image.__subclasses__() + Video.__subclasses__() + [Other]:
+		compatible = []
+		for i in [Folder] + Image.__subclasses__() + Video.__subclasses__():
 			datatype = i()
+			if (datatype.compatible(path)):
+				compatible += [datatype]
+
+		if (len(compatible) == 0):
+			msg_info.print(str(path) + ": Unsupported filetype. Using out/other")
+			compatible = [Other()]
+
+		for i in compatible:
+			datatype = i
 			if (datatype.set(path)):
 				self.datatype = datatype
 				return True
-		msg_error.print("Already exists in out/other: " + path)
 		return False
-
 	def run(self):
 		self.datatype.run()
+exit_flag = False
+
+def signal_handler(signal, frame):
+	msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
+	global exit_flag
+	exit_flag = True
 
 def multiplexer(lock_media, lock_folder):
 	msg_status.print("Thread launched")
-	while (True):
-		transcode = Transcode()
-		with lock_folder:
-			folders = [i for i in IN_FOLDER.iterdir() if i.is_dir()]
-			for i in folders:
-				if (transcode.set(i)):
-					break
-		transcode.run()
+	while (not exit_flag):
+		transcode  = Transcode()
+		time_total = 0.0
+		seconds    = 10.0
+		if (transcode.datatype is nop):
+			time_start = time.time()
+			with lock_folder:
+				folders = [i for i in IN_FOLDER.iterdir() if i.is_dir()]
+				for i in folders:
+					if (transcode.set(i)):
+						break
+			time_total = time.time() - start
+			transcode.run()
 
-		with lock_media:
-			medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
-			for i in medias:
-				if (transcode.set(i)):
-					break
+		if (transcode.datatype is nop):
+			time_start = time.time()
+			with lock_media:
+				medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
+				for i in medias:
+					if (transcode.set(i)):
+						break
+			time_total  += time.time() - time_start
+			transcode.run()
+		
+		if (transcode.datatype is nop):
+			target = total * 1000.0
+			if (target > seconds):
+				seconds = target
 
-		transcode.run()
-		time.sleep(10)
+		time.sleep(seconds)
+	print("exited")
 
 def check_environment(args):
 	working = 0
@@ -1004,6 +1044,8 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--nofail', action='store_true', help="Ignore errors, partial functionality.")
 	args = parser.parse_args()
+
+	signal.signal(signal.SIGINT, signal_handler)
 
 	msg_status.print("launching")
 	os.makedirs(USER_PRIVATE, exist_ok=True)
