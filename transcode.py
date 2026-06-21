@@ -1000,17 +1000,17 @@ def multiplexer(lock_media, lock_folder):
 		transcode  = Transcode()
 		time_total = 0.0
 		seconds    = 10.0
-		if (transcode.datatype is nop):
+		if (type(transcode.datatype) is nop):
 			time_start = time.time()
 			with lock_folder:
 				folders = [i for i in IN_FOLDER.iterdir() if i.is_dir()]
 				for i in folders:
 					if (transcode.set(i)):
 						break
-			time_total = time.time() - start
+			time_total += time.time() - time_start
 			transcode.run()
 
-		if (transcode.datatype is nop):
+		if (type(transcode.datatype) is nop):
 			time_start = time.time()
 			with lock_media:
 				medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
@@ -1020,7 +1020,7 @@ def multiplexer(lock_media, lock_folder):
 			time_total  += time.time() - time_start
 			transcode.run()
 		
-		if (transcode.datatype is nop):
+		if (type(transcode.datatype) is nop):
 			target = total * 1000.0
 			if (target > seconds):
 				seconds = target
