@@ -1021,7 +1021,7 @@ def multiplexer(lock_media, lock_folder):
 			transcode.run()
 		
 		if (type(transcode.datatype) is nop):
-			target = total * 1000.0
+			target = time_total * 1000.0
 			if (target > seconds):
 				seconds = target
 
