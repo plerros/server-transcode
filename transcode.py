@@ -987,15 +987,19 @@ class Transcode:
 		return False
 	def run(self):
 		self.datatype.run()
-exit_flag = False
 
-def signal_handler(signal, frame):
-	msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
-	global exit_flag
-	exit_flag = True
+exit_flag = False
 
 def multiplexer(lock_media, lock_folder):
 	msg_status.print("Thread launched")
+
+	def signal_handler(signal, frame):
+		msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
+		global exit_flag
+		exit_flag = True
+
+	signal.signal(signal.SIGINT, signal_handler)
+
 	while (not exit_flag):
 		transcode  = Transcode()
 		time_total = 0.0
@@ -1044,6 +1048,18 @@ if __name__ == "__main__":
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--nofail', action='store_true', help="Ignore errors, partial functionality.")
 	args = parser.parse_args()
+
+	def signal_handler(signal, frame):
+		for i in processes:
+			if (not i.pid):
+				continue
+			if (not i.is_alive()):
+				continue
+			
+			try:
+				os.kill(i.pid, signal)
+			except ProcessLookipError:
+				pass
 
 	signal.signal(signal.SIGINT, signal_handler)
 
