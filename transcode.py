@@ -1,4 +1,5 @@
 import argparse
+import contextlib
 import math
 import multiprocessing
 import os
@@ -19,6 +20,7 @@ OUT          = ROOT / "out"
 STATS_CSV    = ROOT / "stats/csv"
 LOCAL_TMP    = ROOT / "tmp"
 
+THREADS     = os.cpu_count()
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
 
@@ -994,7 +996,6 @@ def multiplexer(lock_media, lock_folder):
 	msg_status.print("Thread launched")
 
 	def signal_handler(signal, frame):
-		msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
 		global exit_flag
 		exit_flag = True
 
@@ -1049,7 +1050,9 @@ if __name__ == "__main__":
 	parser.add_argument('--nofail', action='store_true', help="Ignore errors, partial functionality.")
 	args = parser.parse_args()
 
+	sigint_raised = False
 	def signal_handler(signal, frame):
+		global sigint_raised
 		for i in processes:
 			if (not i.pid):
 				continue
@@ -1060,6 +1063,7 @@ if __name__ == "__main__":
 				os.kill(i.pid, signal)
 			except ProcessLookipError:
 				pass
+		sigint_raised = True
 
 	signal.signal(signal.SIGINT, signal_handler)
 
@@ -1075,11 +1079,16 @@ if __name__ == "__main__":
 
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
-	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(os.cpu_count())]
+	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(THREADS)]
 
 	if (check_environment(args)):
 		for p in processes:
 			p.start()
+		
+		signal.pause()
+		if (sigint_raised):
+			msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
+
 		for p in processes:
 			p.join()
 
