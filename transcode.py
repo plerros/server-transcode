@@ -1005,7 +1005,7 @@ class Transcode:
 		self.datatype = nop()
 	def set(self, path:Path):
 		compatible = []
-		for i in [Folder] + subclasses(Image)() + subclasses(Video)():
+		for i in [Folder] + subclasses(Image) + subclasses(Video):
 			datatype = i()
 			if (datatype.compatible(path)):
 				compatible += [datatype]
