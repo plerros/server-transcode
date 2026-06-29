@@ -299,7 +299,7 @@ class Ffmpeg_vmaf(Command):
 	def check_exec_args(self):
 		ret = ""
 		if (not Ffmpeg_random().works()):
-			functional.set(Ffmpeg_random, False)
+			functional.set(Ffmpeg_random(), False)
 			return ret
 
 		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
@@ -829,6 +829,10 @@ class Folder(In_types):
 		os.rename(product, self.outdir / product.name)
 
 class File(In_types):
+	def __init__(self):
+		self.hq = False
+		super().__init__()
+
 	def outCollision(self):
 		if (self.path == Path()) or (self.outdir == Path()):
 			return True
@@ -864,6 +868,9 @@ class File(In_types):
 			return False
 
 		# Late initialization
+		suffixes = ['', ''] + path.suffixes
+		if (suffixes[-2] == ".hq"):
+			self.hq = True
 		self.path = Path(self.tempdir.name) / path.name
 		self.outdir = OUT / path.suffix
 		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
@@ -876,8 +883,12 @@ class File(In_types):
 		return True
 
 	def psnr_min(self):
+		if (self.hq):
+			return 53
 		return 44
 	def psnr_target(self):
+		if (self.hq):
+			return 54
 		return 45
 
 class Image(File):
@@ -937,13 +948,6 @@ class Png(Image):
 		return {".png"}
 	def preRun(self):
 		Optipng().set(self.path).run()
-class Png_hq(Png):
-	def suffixes(self):
-		return {".hq.png"}
-	def psnr_min(self):
-		return 53
-	def psnr_target(self):
-		return 54
 class Webp(Image):
 	def suffixes(self):
 		return {".webp"}
@@ -966,6 +970,18 @@ class Webm(Video):
 class Wmv(Video):
 	def suffixes(self):
 		return {".wmv"}
+
+def subclasses(x):
+	todo = x.__subclasses__()
+	ret  = []
+
+	while (len(todo) != 0):
+		tmp = []
+		for i in todo:
+			tmp += i.__subclasses__()
+			ret += [i]
+		todo = tmp
+	return ret
 
 class Transcode:
 	def __init__(self):
