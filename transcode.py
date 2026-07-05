@@ -4,6 +4,7 @@ import math
 import multiprocessing
 import os
 from   pathlib import Path
+import pathlib
 import re
 from   scipy.optimize import root_scalar
 import shutil
@@ -23,6 +24,10 @@ LOCAL_TMP    = ROOT / "tmp"
 THREADS     = os.cpu_count()
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
+
+BIN_AVIFENC = "avifenc"
+BIN_FFMPEG  = "podman"
+DOCKER_FFMPEG = "linuxserver/ffmpeg:8.1.2"
 
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
@@ -90,6 +95,9 @@ def read_binary_file(path: str) -> bytes:
 def write_binary_file(path: str, data: bytes) -> None:
 	with open(path, "wb") as f:
 		f.write(data)
+
+def container_permit(file: Path):
+	return ["-v", str(file.parent)+':'+str(file.parent)+":z"]
 
 # Globally accessible mapping to denote if an object is fully functional
 class Functional():
@@ -171,7 +179,7 @@ class Command():
 
 class Avifenc(Command):
 	def __init__(self):
-		super().__init__("avifenc")
+		super().__init__(BIN_AVIFENC)
 	def set(self, source: Path, destination: Path, yuv, q):
 		super().set(["-j", "1", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
@@ -196,9 +204,26 @@ class Exiftool_orientation(Command):
 		super().set(["-orientation", path])
 		return self
 
-class Ffmpeg_aomav1(Command):
+class Ffmpeg(Command):
 	def __init__(self):
-		super().__init__("ffmpeg")
+		super().__init__(BIN_FFMPEG)
+
+	def set(self, ffmpeg_args):
+		args = []
+		if (self.execName in {"docker", "podman"}):
+			permissions = []
+			for i in ffmpeg_args:
+				if (isinstance(i, (pathlib.PurePath))):
+					permissions += container_permit(i)
+			args += ["run", "--rm"]
+			args += ["--device", "/dev/dri/renderD128"]
+			args += permissions
+			args += [DOCKER_FFMPEG, "-stats"]
+
+		args += ffmpeg_args
+		super().set(args)
+
+class Ffmpeg_aomav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, crf):
 		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
 		return self
@@ -212,9 +237,7 @@ class Ffmpeg_aomav1(Command):
 			ret += Ffmpeg_vmaf().works_str()
 		return ret
 
-class Ffmpeg_psnr(Command):
-	def __init__(self):
-		super().__init__("ffmpeg")
+class Ffmpeg_psnr(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
 		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
 		return self
@@ -232,16 +255,12 @@ class Ffmpeg_psnr(Command):
 
 		return float(finite)
 
-class Ffmpeg_random(Command):
-	def __init__(self):
-		super().__init__("ffmpeg")
+class Ffmpeg_random(Ffmpeg):
 	def set(self, path:Path):
 		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
 		return self
 
-class Ffmpeg_vaav1(Command):
-	def __init__(self):
-		super().__init__("ffmpeg")
+class Ffmpeg_vaav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, q):
 		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
 		self.stderr = ""
@@ -281,9 +300,7 @@ class Ffmpeg_vaav1(Command):
 			msg_info.print(self.execName + " -vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v av1_vaapi OK")
 		return ret
 
-class Ffmpeg_vmaf(Command):
-	def __init__(self):
-		super().__init__("ffmpeg")
+class Ffmpeg_vmaf(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
 		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
 		self.stderr = ""
@@ -988,7 +1005,7 @@ class Transcode:
 		self.datatype = nop()
 	def set(self, path:Path):
 		compatible = []
-		for i in [Folder] + Image.__subclasses__() + Video.__subclasses__():
+		for i in [Folder] + subclasses(Image) + subclasses(Video):
 			datatype = i()
 			if (datatype.compatible(path)):
 				compatible += [datatype]
@@ -1051,8 +1068,8 @@ def multiplexer(lock_media, lock_folder):
 
 def check_environment(args):
 	working = 0
-	total   = len(Command.__subclasses__())
-	for i in Command.__subclasses__():
+	total   = len(subclasses(Command))
+	for i in subclasses(Command):
 		working += i().works()
 	
 	msg_status.print(str(working) + "/" + str(total) + " components working")
