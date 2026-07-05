@@ -851,6 +851,9 @@ class File(In_types):
 		self.hq = False
 		super().__init__()
 
+	def operations(self):
+		return [Copy(self.path, self.outdir)]
+
 	def outCollision(self):
 		if (self.path == Path()) or (self.outdir == Path()):
 			return True
@@ -860,8 +863,15 @@ class File(In_types):
 				return True
 		return False
 	def run(self):
-		self.preRun()
-		for i in self.operations():
+		operations = self.operations()
+
+		try:
+			self.preRun()
+		except subprocess.CalledProcessError as e:
+			msg_error.print(str(e))
+			operations = [Copy(self.path, self.outdir)]
+
+		for i in operations:
 			if (i.run()):
 				return True
 		return False
@@ -914,8 +924,7 @@ class File(In_types):
 class Image(File):
 	def operations(self):
 		to_avif = To_avif(self.path, self.outdir, self.psnr_min(), self.psnr_target())
-		copy = Copy(self.path, self.outdir)
-		return [to_avif, copy]
+		return [to_avif] + super().operations()
 	def preRun(self):
 		return
 
@@ -923,8 +932,7 @@ class Video(File):
 	def operations(self):
 		to_vaav1 = To_vaav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
 		to_aomav1 = To_aomav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
-		copy = Copy(self.path, self.outdir)
-		return [to_vaav1, to_aomav1, copy]
+		return [to_vaav1, to_aomav1] + super().operations()
 	def preRun(self):
 		return
 	def psnr_min(self):
@@ -952,9 +960,6 @@ class Other(File):
 		os.rename(path, self.path)
 
 		return True
-	def operations(self):
-		copy = Copy(self.path, self.outdir)
-		return [copy]
 	def preRun(self):
 		return
 
