@@ -25,8 +25,9 @@ THREADS     = os.cpu_count()
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
 
-DOCKER_FFMPEG = "linuxserver/ffmpeg:8.1.2"
 BIN_AVIFENC = "avifenc"
+BIN_FFMPEG  = "podman"
+DOCKER_FFMPEG = "linuxserver/ffmpeg:8.1.2"
 
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
@@ -205,18 +206,17 @@ class Exiftool_orientation(Command):
 
 class Ffmpeg(Command):
 	def __init__(self):
-		#super().__init__("ffmpeg")
-		super().__init__("podman")
+		super().__init__(BIN_FFMPEG)
 
-	def set(self, docker_args, ffmpeg_args):
+	def set(self, ffmpeg_args):
 		args = []
-		if (self.execName == "podman"):
+		if (self.execName in {"docker", "podman"}):
 			permissions = []
 			for i in ffmpeg_args:
 				if (isinstance(i, (pathlib.PurePath))):
 					permissions += container_permit(i)
 			args += ["run", "--rm"]
-			args += docker_args
+			args += ["--device", "/dev/dri/renderD128"]
 			args += permissions
 			args += [DOCKER_FFMPEG, "-stats"]
 
@@ -225,7 +225,7 @@ class Ffmpeg(Command):
 
 class Ffmpeg_aomav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, crf):
-		super().set([], ["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
+		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
 		return self
 	def check_dependencies(self):
 		ret = "\n"
@@ -239,7 +239,7 @@ class Ffmpeg_aomav1(Ffmpeg):
 
 class Ffmpeg_psnr(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
-		super().set([], ["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
 		return self
 	def run(self):
 		result = super().run()
@@ -257,12 +257,12 @@ class Ffmpeg_psnr(Ffmpeg):
 
 class Ffmpeg_random(Ffmpeg):
 	def set(self, path:Path):
-		super().set([], ["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
+		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
 		return self
 
 class Ffmpeg_vaav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, q):
-		super().set(["--device", "/dev/dri/renderD128"], ["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
+		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
 		self.stderr = ""
 		return self
 	def run(self):
@@ -302,7 +302,7 @@ class Ffmpeg_vaav1(Ffmpeg):
 
 class Ffmpeg_vmaf(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
-		super().set([], ["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
 		self.stderr = ""
 		return self
 	def run(self):
