@@ -160,7 +160,8 @@ class Command():
 				if (not functional.is_None(self)):
 					break
 				string += i()
-		except subprocess.CalledProcessError:
+		except subprocess.CalledProcessError as e:
+			string = str(e)
 			functional.set(self, False)
 
 		if (functional.is_None(self)):
