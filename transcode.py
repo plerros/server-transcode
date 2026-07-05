@@ -170,9 +170,9 @@ class Command():
 		if (functional.is_True(self)):
 			msg_type = msg_info
 			string = "OK"
-	
+
 		return msg_type.string(type(self).__name__ + ": " + string, print_out=print_out)
-	
+
 	def works(self):
 		self.works_str()
 		return functional.is_True(self)
@@ -439,8 +439,8 @@ class Operation():
 	def run(self):
 		for i in self.dependencies:
 			if(not i().works()):
-				return 
-		
+				return
+
 		try:
 			ret = self.run_internal()
 		except subprocess.CalledProcessError:
@@ -562,7 +562,7 @@ class To_avif(Operation):
 
 		result = None
 		try:
-			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()	
+			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()
 		except subprocess.CalledProcessError as e:
 			# Try conversion to .png:
 			if (grep(r'Unrecognized file format for input file: ', e.stderr.decode('utf-8'))):
@@ -601,7 +601,7 @@ class To_vaav1(Operation):
 		self.psnr_target = psnr_target
 		self.vmaf_min    = vmaf_min
 		self.vmaf_target = vmaf_target
-	
+
 		self.cache: dict[list[str], Cache_vaav1] = {}
 	def outSuffix(self, path):
 		return path.with_suffix(".vaav1.mkv")
@@ -620,7 +620,7 @@ class To_vaav1(Operation):
 			msg_info.print(root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.1, maxiter=int(math.log(256,2))))
 		except ValueError:
 			return False
-		
+
 		# best
 		best = None
 		for i in self.cache:
@@ -638,7 +638,7 @@ class To_vaav1(Operation):
 				best = j
 
 		ret = True
-	
+
 		stat_q     = ""
 		stat_outSize = ""
 		stat_psnr    = ""
@@ -687,7 +687,7 @@ class To_vaav1(Operation):
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 			append_line(self.op_info, string="vmaf " + str(vmaf))
-		
+
 		y = vmaf - self.vmaf_target
 
 		# Store results to cache
@@ -720,7 +720,7 @@ class To_aomav1(Operation):
 			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=int(math.log(64,2))))
 		except ValueError:
 			return False
-		
+
 		# best
 		best = None
 		for i in self.cache:
@@ -738,7 +738,7 @@ class To_aomav1(Operation):
 				best = j
 
 		ret = True
-	
+
 		stat_crf     = ""
 		stat_outSize = ""
 		stat_psnr    = ""
@@ -787,7 +787,7 @@ class To_aomav1(Operation):
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 			append_line(self.op_info, string="vmaf " + str(vmaf))
-		
+
 		y = vmaf - self.vmaf_target
 
 		# Store results to cache
@@ -901,11 +901,13 @@ class File(In_types):
 
 	def psnr_min(self):
 		if (self.hq):
-			return 53
+			bits = 16
+			return 47+(bits*1.2)
 		return 44
 	def psnr_target(self):
 		if (self.hq):
-			return 54
+			bits = 16
+			return 48+(bits*1.2)
 		return 45
 
 class Image(File):
@@ -1057,7 +1059,7 @@ def multiplexer(lock_media, lock_folder):
 						break
 			time_total  += time.time() - time_start
 			transcode.run()
-		
+
 		if (type(transcode.datatype) is nop):
 			target = time_total * 1000.0
 			if (target > seconds):
@@ -1071,7 +1073,7 @@ def check_environment(args):
 	total   = len(subclasses(Command))
 	for i in subclasses(Command):
 		working += i().works()
-	
+
 	msg_status.print(str(working) + "/" + str(total) + " components working")
 	if ((working < total) and (not args.nofail)):
 		msg_status.print(Bold("use --nofail to ignore"))
@@ -1091,7 +1093,7 @@ if __name__ == "__main__":
 				continue
 			if (not i.is_alive()):
 				continue
-			
+
 			try:
 				os.kill(i.pid, signal)
 			except ProcessLookipError:
@@ -1117,7 +1119,7 @@ if __name__ == "__main__":
 	if (check_environment(args)):
 		for p in processes:
 			p.start()
-		
+
 		signal.pause()
 		if (sigint_raised):
 			msg_status.print("Received SIGINT. Wait for all threads to finish current processing.")
