@@ -1102,7 +1102,7 @@ if __name__ == "__main__":
 
 			try:
 				os.kill(i.pid, signal)
-			except ProcessLookipError:
+			except ProcessLookupError:
 				pass
 		sigint_raised = True
 

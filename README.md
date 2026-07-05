@@ -22,4 +22,7 @@ sudo mount [IP]:/exports/out out
 5. `mv` folders (for compression) to *in/folder/*
 6. pick up the results from *out/*
 
-If you're transcoding high quality PNG images, set their extension to: *.png_hq*
+If you're transcoding high quality media, add `.hq` before the file extension like this:
+```
+image.hq.png
+```
