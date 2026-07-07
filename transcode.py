@@ -13,6 +13,8 @@ import subprocess
 import tempfile
 import time
 
+from config import CONFIG
+
 ROOT         = Path("root")
 USER_PRIVATE = ROOT / "in/user_private"
 IN_FOLDER    = ROOT / "in/folder"
@@ -21,13 +23,9 @@ OUT          = ROOT / "out"
 STATS_CSV    = ROOT / "stats/csv"
 LOCAL_TMP    = ROOT / "tmp"
 
-THREADS     = os.cpu_count()
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
 
-BIN_AVIFENC = "avifenc"
-BIN_FFMPEG  = "podman"
-DOCKER_FFMPEG = "linuxserver/ffmpeg:8.1.2"
 
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
@@ -180,7 +178,7 @@ class Command():
 
 class Avifenc(Command):
 	def __init__(self):
-		super().__init__(BIN_AVIFENC)
+		super().__init__(CONFIG.BIN_AVIFENC)
 	def set(self, source: Path, destination: Path, yuv, q):
 		super().set(["-j", "1", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
@@ -207,7 +205,7 @@ class Exiftool_orientation(Command):
 
 class Ffmpeg(Command):
 	def __init__(self):
-		super().__init__(BIN_FFMPEG)
+		super().__init__(CONFIG.BIN_FFMPEG)
 
 	def set(self, ffmpeg_args):
 		args = []
@@ -219,7 +217,7 @@ class Ffmpeg(Command):
 			args += ["run", "--rm"]
 			args += ["--device", "/dev/dri/renderD128"]
 			args += permissions
-			args += [DOCKER_FFMPEG, "-stats"]
+			args += [CONFIG.DOCKER_FFMPEG, "-stats"]
 
 		args += ffmpeg_args
 		super().set(args)
@@ -880,6 +878,9 @@ class File(In_types):
 		if (not path.is_file()):
 			return False
 
+		if (path.stat().st_size > CONFIG.MAX_FILE_BYTES):
+			return False
+
 		ret = False
 		compatible_suffixes = self.suffixes()
 		for i in self.suffixes():
@@ -1133,7 +1134,7 @@ if __name__ == "__main__":
 
 	lock_folder = multiprocessing.Lock()
 	lock_media  = multiprocessing.Lock()
-	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(THREADS)]
+	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(CONFIG.THREADS)]
 
 	if (check_environment(args)):
 		for p in processes:
