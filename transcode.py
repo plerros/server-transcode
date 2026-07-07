@@ -1008,6 +1008,23 @@ def subclasses(x):
 		todo = tmp
 	return ret
 
+class source:
+	def __init__(self, path:Path, lock):
+		self.path      = path
+		self.lock      = lock
+
+class src_folder(source):
+	def __init__(self):
+		super().__init__(IN_FOLDER, lock_folder)
+	def list(self):
+		return [i for i in self.path.iterdir() if i.is_dir()]
+
+class src_media(source):
+	def __init__(self):
+		super().__init__(IN_MEDIA, lock_media)
+	def list(self):
+		return [i for i in self.path.rglob("*") if i.is_file()]
+
 class Transcode:
 	def __init__(self):
 		self.datatype = nop()
@@ -1030,6 +1047,18 @@ class Transcode:
 		return False
 	def run(self):
 		self.datatype.run()
+	def pick(self, source):
+		if (type(self.datatype) is not nop):
+			return 0.0
+
+		time_start = time.time()
+		with source.lock:
+			for i in source.list():
+				if (self.set(i)):
+					break
+		time_total = time.time() - time_start
+		self.run()
+		return time_total
 
 exit_flag = False
 
@@ -1046,25 +1075,9 @@ def multiplexer(lock_media, lock_folder):
 		transcode  = Transcode()
 		time_total = 0.0
 		seconds    = 10.0
-		if (type(transcode.datatype) is nop):
-			time_start = time.time()
-			with lock_folder:
-				folders = [i for i in IN_FOLDER.iterdir() if i.is_dir()]
-				for i in folders:
-					if (transcode.set(i)):
-						break
-			time_total += time.time() - time_start
-			transcode.run()
-
-		if (type(transcode.datatype) is nop):
-			time_start = time.time()
-			with lock_media:
-				medias = [i for i in IN_MEDIA.rglob("*") if i.is_file()]
-				for i in medias:
-					if (transcode.set(i)):
-						break
-			time_total  += time.time() - time_start
-			transcode.run()
+		
+		for i in subclasses(source):
+			time_total += transcode.pick(i())
 
 		if (type(transcode.datatype) is nop):
 			target = time_total * 1000.0
