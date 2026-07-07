@@ -26,6 +26,8 @@ LOCAL_TMP    = ROOT / "tmp"
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
 
+lock_folder = multiprocessing.Lock()
+lock_media  = multiprocessing.Lock()
 
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
@@ -1132,8 +1134,6 @@ if __name__ == "__main__":
 		shutil.rmtree(LOCAL_TMP)
 	os.makedirs(LOCAL_TMP,         exist_ok=True)
 
-	lock_folder = multiprocessing.Lock()
-	lock_media  = multiprocessing.Lock()
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(CONFIG.THREADS)]
 
 	if (check_environment(args)):
