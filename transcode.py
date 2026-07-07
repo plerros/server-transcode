@@ -1054,7 +1054,7 @@ class Transcode:
 		time_start = time.time()
 		with source.lock:
 			for i in source.list():
-				if (self.set(i)):
+				if ((self.set(i)) and (type(self.datatype) is not Other)):
 					break
 		time_total = time.time() - time_start
 		self.run()
