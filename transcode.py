@@ -673,17 +673,27 @@ class To_vaav1(Operation):
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
-		psnr = float("+inf")
-		vmaf = float("+inf")
-		if (self.path.stat().st_size < self.op_destination.stat().st_size):
-			append_line(self.op_info, string="bigger than source")
+		in_bytes  = self.path.stat().st_size
+		out_bytes = self.op_destination.stat().st_size
+
+		if (out_bytes > in_bytes):
+				append_line(self.op_info, string="bigger than source")
+
+		psnr = None
+		if (out_bytes > in_bytes):
+				psnr = float("+inf")
 		else:
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
 
-		if (psnr >= self.psnr_min) and (math.isfinite(psnr)):
+		vmaf = None
+		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
+			vmaf = float("+inf")
+		elif (psnr < self.psnr_min):
+			vmaf = float("-inf")
+		else:
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
@@ -773,17 +783,27 @@ class To_aomav1(Operation):
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
-		psnr = float("+inf")
-		vmaf = float("+inf")
-		if (self.path.stat().st_size < self.op_destination.stat().st_size):
-			append_line(self.op_info, string="bigger than source")
+		in_bytes  = self.path.stat().st_size
+		out_bytes = self.op_destination.stat().st_size
+
+		if (out_bytes > in_bytes):
+				append_line(self.op_info, string="bigger than source")
+
+		psnr = None
+		if (out_bytes > in_bytes):
+				psnr = float("+inf")
 		else:
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
 
-		if (psnr >= self.psnr_min) and (math.isfinite(psnr)):
+		vmaf = None
+		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
+			vmaf = float("+inf")
+		elif (psnr < self.psnr_min):
+			vmaf = float("-inf")
+		else:
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
