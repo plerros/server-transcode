@@ -1,6 +1,3 @@
-in
 ip.txt
-out
-stats
-tmp
+root
 __pycache__

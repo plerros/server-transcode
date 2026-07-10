@@ -912,7 +912,8 @@ class File(In_types):
 			if (''.join(str(i) for i in suffixes[idx:None])) in compatible_suffixes:
 				return True
 		return ret
-
+	def out_subdir(self, path:Path):
+		return path.suffix
 	def set(self, path:Path):
 		# Compatible suffix
 		if (not self.compatible(path)):
@@ -923,7 +924,7 @@ class File(In_types):
 		if (suffixes[-2] == ".hq"):
 			self.hq = True
 		self.path = Path(self.tempdir.name) / path.name
-		self.outdir = OUT / path.suffix
+		self.outdir = OUT / self.out_subdir(path)
 		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
 
 		if (self.outCollision()):
@@ -968,21 +969,12 @@ class Video(File):
 		return 95
 
 class Other(File):
-	def set(self, path:Path):
+	def compatible(self, path):
 		if (not path.is_file()):
 			return False
-
-		# Late initialization
-		self.path = Path(self.tempdir.name) / path.name
-		self.outdir = OUT / "other"
-		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
-
-		if (self.outCollision()):
-			return False
-
-		os.rename(path, self.path)
-
 		return True
+	def out_subdir(self, path:Path):
+		return "other"
 	def preRun(self):
 		return
 
@@ -1077,8 +1069,14 @@ class Transcode:
 		time_start = time.time()
 		with source.lock:
 			for i in source.list():
-				if ((self.set(i)) and (type(self.datatype) is not Other)):
-					break
+				if (not self.set(i)):
+					continue
+				
+				if (type(self.datatype) is Other):
+					self.run()
+					continue
+				
+				break
 		time_total = time.time() - time_start
 		self.run()
 		return time_total
