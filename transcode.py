@@ -284,7 +284,8 @@ class Ffmpeg_vaav1(Ffmpeg):
 	def check_exec_args(self):
 		ret = ""
 		if (not Ffmpeg_random().works()):
-			functional.set(Ffmpeg_random(), False)
+			functional.set(self, False)
+			ret += Ffmpeg_random().works_str()
 			return ret
 
 		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
