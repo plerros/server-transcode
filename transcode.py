@@ -238,6 +238,51 @@ class Ffmpeg_aomav1(Ffmpeg):
 			ret += Ffmpeg_vmaf().works_str()
 		return ret
 
+class Ffmpeg_crop(Ffmpeg):
+	def set(self, source: Path, destination: Path, dst_resolution):
+		ffmpeg_resolution = Ffmpeg_resolution().set(source)
+		ffmpeg_resolution.run()
+		resolution = ffmpeg_resolution.resolution()
+
+		offset = [0, 0]
+		for i in [0, 1]:
+			if (dst_resolution[i] > resolution[i]):
+				dst_resolution[i] = resolution[i]
+			offset[i] = int((resolution[i] - dst_resolution[i]) / 2)
+
+		super().set(["-i", source, "-vf", "crop="+str(dst_resolution[0])+":"+str(dst_resolution[1])+":"+str(offset[0])+":"+str(offset[1]), destination])
+		return self
+
+	def check_exec_args(self):
+		ret = ""
+		if (not Ffmpeg_random().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_random().works_str()
+			return ret
+
+		if (not Ffmpeg_resolution().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_resolution().works_str()
+			return ret
+
+		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		random_in  = Path(tempdir.name) / "random.mp4"
+		random_out = Path(tempdir.name) / "random2.mp4"
+		Ffmpeg_random().set(random_in).run()
+		self.set(random_in, random_out, [1918, 1078])
+		self.run()
+		
+		ffmpeg_resolution = Ffmpeg_resolution().set(random_out)
+		ffmpeg_resolution.run()
+		resolution = ffmpeg_resolution.resolution()
+
+		if (resolution != [1918, 1078]):
+			functional.set(self, False)
+			msg_error.print("Ffmpeg_crop() failed self-test" + str(resolution))
+		else:
+			msg_info.print(self.execName + " -vf crop OK")
+		return ret
+
 class Ffmpeg_psnr(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
 		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
@@ -261,6 +306,44 @@ class Ffmpeg_random(Ffmpeg):
 		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
 		return self
 
+class Ffmpeg_resolution(Ffmpeg):
+	def set(self, path:Path):
+		super().set(["-hide_banner", "-i", path, "-f", "null", "/dev/null"])
+		return self
+	def run(self):
+		result = super().run()
+		self.stderr = result.stderr.decode('utf-8')
+		return result
+	def resolution(self):
+		tmp_re = grep(r'Stream.*Video.*',         self.stderr)
+		tmp_re = grep(r'[1-9][0-9]*x[1-9][0-9]*', tmp_re)
+
+		width  = grep(r'[1-9][0-9]*x', tmp_re)
+		width  = grep(r'[1-9][0-9]*', width)
+
+		height = grep(r'x[1-9][0-9]*', tmp_re)
+		height = grep(r'[1-9][0-9]*', height)
+
+		return [int(width), int(height)]
+	def check_exec_args(self):
+		ret = ""
+		if (not Ffmpeg_random().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_random().works_str()
+			return ret
+
+		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		random_in  = Path(tempdir.name) / "random.mp4"
+		Ffmpeg_random().set(random_in).run()
+		self.set(random_in)
+		self.run()
+		if (self.resolution() != [1920,1080]):
+			functional.set(self, False)
+			msg_error.print("Ffmpeg_resolution() failed self-test")
+		else:
+			msg_info.print("Ffmpeg_resolution(): OK")
+		return ret
+
 class Ffmpeg_vaav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, q):
 		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
@@ -274,6 +357,9 @@ class Ffmpeg_vaav1(Ffmpeg):
 		return result
 	def check_dependencies(self):
 		ret = "\n"
+		if (not Ffmpeg_resolution().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_resolution().works_str()
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
 			ret += Ffmpeg_psnr().works_str()
@@ -614,6 +700,28 @@ class To_vaav1(Operation):
 		return path.with_suffix(".vaav1.log")
 	def run_internal(self):
 		# test for gpu support
+		ffmpeg_resolution = Ffmpeg_resolution().set(self.path)
+		ffmpeg_resolution.run()
+		resolution = ffmpeg_resolution.resolution()
+
+		if (resolution[0] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
+			return False
+		if (resolution[1] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
+			return False
+		
+		op_resolution = []
+		stat_cropped  = False
+		for i in resolution:
+			tmp = i - (i % CONFIG.VAAV1_RESOLUTION_MODULO)
+			op_resolution += [tmp]
+			if (tmp != i):
+				stat_cropped = True
+
+		if (stat_cropped):
+			self.op_source = self.path.with_suffix(".croppped" + self.path.suffix)
+			ffmpeg_crop = Ffmpeg_crop().set(self.path, self.op_source, op_resolution)
+			ffmpeg_crop.run()
+
 
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
