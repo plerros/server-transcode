@@ -72,12 +72,11 @@ msg_status = msg("[status]")
 msg_stdout = msg("[stdout]", [Bold])
 msg_stderr = msg("[stderr]", [Bold])
 
-def grep(pattern: re.Pattern, string: str):
-	result = re.search(pattern, string)
+def grep(pattern: re.Pattern, string: str, idx=0):
+	result = re.findall(pattern, string)
 	if (not result):
 		return ""
-
-	return result[0];
+	return result[idx]
 
 def append_line(file_path: str, string="", csv=[]) -> None:
 	line=str(string)
@@ -225,8 +224,13 @@ class Ffmpeg(Command):
 		super().set(args)
 
 class Ffmpeg_aomav1(Ffmpeg):
-	def set(self, source: Path, destination: Path, crf):
-		super().set(["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0, "-c:a", "libopus", "-b:a", "128k", destination])
+	def set(self, source: Path, destination: Path, crf, max_bytes=None):
+		video_args = ["-i", source, "-c:v", "libaom-av1", "-b:v", 0, "-crf", crf, "-quality", "good", "-speed", 0]
+		audio_args = ["-c:a", "libopus", "-b:a", "128k", destination]
+		if (max_bytes is not None):
+			video_args += ["-fs", max_bytes]
+
+		super().set(video_args + audio_args)
 		return self
 	def check_dependencies(self):
 		ret = "\n"
@@ -240,9 +244,9 @@ class Ffmpeg_aomav1(Ffmpeg):
 
 class Ffmpeg_crop(Ffmpeg):
 	def set(self, source: Path, destination: Path, dst_resolution):
-		ffmpeg_resolution = Ffmpeg_resolution().set(source)
-		ffmpeg_resolution.run()
-		resolution = ffmpeg_resolution.resolution()
+		ffmpeg_stats = Ffmpeg_stats().set(source)
+		ffmpeg_stats.run()
+		resolution = ffmpeg_stats.resolution()
 
 		offset = [0, 0]
 		for i in [0, 1]:
@@ -260,9 +264,9 @@ class Ffmpeg_crop(Ffmpeg):
 			ret += Ffmpeg_random().works_str()
 			return ret
 
-		if (not Ffmpeg_resolution().works()):
+		if (not Ffmpeg_stats().works()):
 			functional.set(self, False)
-			ret += Ffmpeg_resolution().works_str()
+			ret += Ffmpeg_stats().works_str()
 			return ret
 
 		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
@@ -272,9 +276,9 @@ class Ffmpeg_crop(Ffmpeg):
 		self.set(random_in, random_out, [1918, 1078])
 		self.run()
 		
-		ffmpeg_resolution = Ffmpeg_resolution().set(random_out)
-		ffmpeg_resolution.run()
-		resolution = ffmpeg_resolution.resolution()
+		ffmpeg_stats = Ffmpeg_stats().set(random_out)
+		ffmpeg_stats.run()
+		resolution = ffmpeg_stats.resolution()
 
 		if (resolution != [1918, 1078]):
 			functional.set(self, False)
@@ -306,7 +310,7 @@ class Ffmpeg_random(Ffmpeg):
 		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
 		return self
 
-class Ffmpeg_resolution(Ffmpeg):
+class Ffmpeg_stats(Ffmpeg):
 	def set(self, path:Path):
 		super().set(["-hide_banner", "-i", path, "-f", "null", "/dev/null"])
 		return self
@@ -314,6 +318,10 @@ class Ffmpeg_resolution(Ffmpeg):
 		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
 		return result
+	def frames(self):
+		tmp_re = grep(r'frame=\s*[1-9][0-9]*', self.stderr)
+		return grep(r'[1-9][0-9]*', tmp_re)
+
 	def resolution(self):
 		tmp_re = grep(r'Stream.*Video.*',         self.stderr)
 		tmp_re = grep(r'[1-9][0-9]*x[1-9][0-9]*', tmp_re)
@@ -339,14 +347,18 @@ class Ffmpeg_resolution(Ffmpeg):
 		self.run()
 		if (self.resolution() != [1920,1080]):
 			functional.set(self, False)
-			msg_error.print("Ffmpeg_resolution() failed self-test")
+			msg_error.print("Ffmpeg_stats() failed self-test")
 		else:
-			msg_info.print("Ffmpeg_resolution(): OK")
+			msg_info.print("Ffmpeg_stats(): OK")
 		return ret
 
 class Ffmpeg_vaav1(Ffmpeg):
-	def set(self, source: Path, destination: Path, q):
-		super().set(["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29, "-c:a", "libopus", "-b:a", "128k", destination])
+	def set(self, source: Path, destination: Path, q, max_bytes=None):
+		video_args = ["-i", source, "-vaapi_device", "/dev/dri/renderD128", "-vf", "format=nv12,hwupload", "-c:v", "av1_vaapi", "-b:v", 0, "-q:v", int(q), "-g:v", 10000000, "-compression_level:v", 29]
+		audio_args = ["-c:a", "libopus", "-b:a", "128k", destination]
+		if (max_bytes is not None):
+			video_args += ["-fs", max_bytes]
+		super().set(video_args + audio_args)
 		self.stderr = ""
 		return self
 	def run(self):
@@ -357,9 +369,9 @@ class Ffmpeg_vaav1(Ffmpeg):
 		return result
 	def check_dependencies(self):
 		ret = "\n"
-		if (not Ffmpeg_resolution().works()):
+		if (not Ffmpeg_stats().works()):
 			functional.set(self, False)
-			ret += Ffmpeg_resolution().works_str()
+			ret += Ffmpeg_stats().works_str()
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
 			ret += Ffmpeg_psnr().works_str()
@@ -700,9 +712,9 @@ class To_vaav1(Operation):
 		return path.with_suffix(".vaav1.log")
 	def run_internal(self):
 		# test for gpu support
-		ffmpeg_resolution = Ffmpeg_resolution().set(self.path)
-		ffmpeg_resolution.run()
-		resolution = ffmpeg_resolution.resolution()
+		ffmpeg_stats = Ffmpeg_stats().set(self.path)
+		ffmpeg_stats.run()
+		resolution = ffmpeg_stats.resolution()
 
 		if (resolution[0] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
 			return False
@@ -775,7 +787,7 @@ class To_vaav1(Operation):
 		store_bytes = True
 
 		append_line(self.op_info, string="doing: " + str(q))
-		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run()
+		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q, max_bytes=self.path.stat().st_size).run()
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
@@ -783,13 +795,24 @@ class To_vaav1(Operation):
 		in_bytes  = self.path.stat().st_size
 		out_bytes = self.op_destination.stat().st_size
 
+		ffmpeg_stats = Ffmpeg_stats().set(self.path)
+		ffmpeg_stats.run()
+		in_frames = ffmpeg_stats.frames()
+		ffmpeg_stats = Ffmpeg_stats().set(self.op_destination)
+		ffmpeg_stats.run()
+		out_frames = ffmpeg_stats.frames()
+
 		if (out_bytes > in_bytes):
 			append_line(self.op_info, string="bigger than source")
 			store_bytes = False
+		elif (out_frames != in_frames):
+			append_line(self.op_info, string="frame mismatch")
+			store_bytes = False
 
 		psnr = None
-		if (out_bytes > in_bytes):
-				psnr = float("+inf")
+		if ((out_bytes > in_bytes) or (out_frames < in_frames)):
+			# If out frames are less, assume -fs was triggered
+			psnr = float("+inf")
 		else:
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
@@ -799,7 +822,7 @@ class To_vaav1(Operation):
 			store_bytes = False
 
 		vmaf = None
-		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
+		if ((out_bytes > in_bytes) or (out_frames < in_frames) or (psnr == float("+inf"))):
 			vmaf = float("+inf")
 		elif (psnr < self.psnr_min):
 			vmaf = float("-inf")
@@ -845,7 +868,8 @@ class To_aomav1(Operation):
 		# brentq
 		try:
 			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.49))
-		except ValueError:
+		except ValueError as e:
+			print(e)
 			return False
 
 		# best
@@ -891,7 +915,7 @@ class To_aomav1(Operation):
 		store_bytes = True
 
 		append_line(self.op_info, string="doing: " + str(crf))
-		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run()
+		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf, max_bytes=self.path.stat().st_size).run()
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
@@ -899,13 +923,24 @@ class To_aomav1(Operation):
 		in_bytes  = self.path.stat().st_size
 		out_bytes = self.op_destination.stat().st_size
 
+		ffmpeg_stats = Ffmpeg_stats().set(self.path)
+		ffmpeg_stats.run()
+		in_frames = ffmpeg_stats.frames()
+		ffmpeg_stats = Ffmpeg_stats().set(self.op_destination)
+		ffmpeg_stats.run()
+		out_frames = ffmpeg_stats.frames()
+	
 		if (out_bytes > in_bytes):
 			append_line(self.op_info, string="bigger than source")
 			store_bytes = False
+		if (out_frames != in_frames):
+			append_line(self.op_info, string="frame mismatch")
+			store_bytes = False
 
 		psnr = None
-		if (out_bytes > in_bytes):
-				psnr = float("+inf")
+		if ((out_bytes > in_bytes) or (out_frames < in_frames)):
+			# If out frames are less, assume -fs was triggered
+			psnr = float("+inf")
 		else:
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
@@ -915,7 +950,7 @@ class To_aomav1(Operation):
 			store_bytes = False
 
 		vmaf = None
-		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
+		if ((out_bytes > in_bytes) or (out_frames < in_frames) or (psnr == float("+inf"))):
 			vmaf = float("+inf")
 		elif (psnr < self.psnr_min):
 			vmaf = float("-inf")
