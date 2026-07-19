@@ -581,7 +581,7 @@ class To_avif(Operation):
 			append_line(self.op_info, string="\n" + "YUV " + i)
 
 			try:
-				msg_info.print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.1, maxiter=2+int(math.log(100,2))))
+				msg_info.print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.49))
 			except ValueError:
 				failures += 1
 
@@ -728,7 +728,7 @@ class To_vaav1(Operation):
 
 		# brentq
 		try:
-			msg_info.print(root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.1, maxiter=2+int(math.log(256,2))))
+			msg_info.print(root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.49))
 		except ValueError:
 			return False
 
@@ -844,7 +844,7 @@ class To_aomav1(Operation):
 
 		# brentq
 		try:
-			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.1, maxiter=2+int(math.log(64,2))))
+			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.49))
 		except ValueError:
 			return False
 
