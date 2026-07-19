@@ -736,13 +736,8 @@ class To_vaav1(Operation):
 		best = None
 		for i in self.cache:
 			j = self.cache[i]
-			if (self.path.stat().st_size < len(j.outBytes)):
+			if (len(j.outBytes) == 0):
 				continue
-			if (j.psnr < self.psnr_min):
-				continue
-			if (j.vmaf < self.vmaf_min):
-				continue
-
 			if (not best):
 				best = j
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
@@ -777,6 +772,8 @@ class To_vaav1(Operation):
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
 
+		store_bytes = True
+
 		append_line(self.op_info, string="doing: " + str(q))
 		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q).run()
 		append_line(self.op_info, string="done")
@@ -787,7 +784,8 @@ class To_vaav1(Operation):
 		out_bytes = self.op_destination.stat().st_size
 
 		if (out_bytes > in_bytes):
-				append_line(self.op_info, string="bigger than source")
+			append_line(self.op_info, string="bigger than source")
+			store_bytes = False
 
 		psnr = None
 		if (out_bytes > in_bytes):
@@ -797,6 +795,8 @@ class To_vaav1(Operation):
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
+		if (psnr < self.psnr_min):
+			store_bytes = False
 
 		vmaf = None
 		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
@@ -808,11 +808,17 @@ class To_vaav1(Operation):
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 			append_line(self.op_info, string="vmaf " + str(vmaf))
+		if (vmaf < self.vmaf_min):
+			store_bytes = False
 
 		y = vmaf - self.vmaf_target
 
 		# Store results to cache
-		self.cache[input_hash] = Cache_vaav1(read_binary_file(self.op_source), q, read_binary_file(self.op_destination), psnr, vmaf, y)
+		data = b''
+		if (store_bytes):
+			data = read_binary_file(self.op_destination)
+
+		self.cache[input_hash] = Cache_vaav1(read_binary_file(self.op_source), q, data, psnr, vmaf, y)
 		self.op_destination.unlink()
 		return y
 
@@ -846,13 +852,8 @@ class To_aomav1(Operation):
 		best = None
 		for i in self.cache:
 			j = self.cache[i]
-			if (self.path.stat().st_size < len(j.outBytes)):
+			if (len(j.outBytes) == 0):
 				continue
-			if (j.psnr < self.psnr_min):
-				continue
-			if (j.vmaf < self.vmaf_min):
-				continue
-
 			if (not best):
 				best = j
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
@@ -887,6 +888,8 @@ class To_aomav1(Operation):
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
 
+		store_bytes = True
+
 		append_line(self.op_info, string="doing: " + str(crf))
 		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf).run()
 		append_line(self.op_info, string="done")
@@ -897,7 +900,8 @@ class To_aomav1(Operation):
 		out_bytes = self.op_destination.stat().st_size
 
 		if (out_bytes > in_bytes):
-				append_line(self.op_info, string="bigger than source")
+			append_line(self.op_info, string="bigger than source")
+			store_bytes = False
 
 		psnr = None
 		if (out_bytes > in_bytes):
@@ -907,6 +911,8 @@ class To_aomav1(Operation):
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
+		if (psnr < self.psnr_min):
+			store_bytes = False
 
 		vmaf = None
 		if ((out_bytes > in_bytes) or (psnr == float("+inf"))):
@@ -918,11 +924,17 @@ class To_aomav1(Operation):
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
 			append_line(self.op_info, string="vmaf " + str(vmaf))
+		if (vmaf < self.vmaf_min):
+			store_bytes = False
 
 		y = vmaf - self.vmaf_target
 
 		# Store results to cache
-		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.op_source), crf, read_binary_file(self.op_destination), psnr, vmaf, y)
+		data = b''
+		if (store_bytes):
+			data = read_binary_file(self.op_destination)
+
+		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.op_source), crf, data, psnr, vmaf, y)
 		self.op_destination.unlink()
 		return y
 
@@ -1253,14 +1265,10 @@ if __name__ == "__main__":
 	signal.signal(signal.SIGINT, signal_handler)
 
 	msg_status.print("launching")
-	os.makedirs(USER_PRIVATE, exist_ok=True)
-	os.makedirs(IN_FOLDER,    exist_ok=True)
-	os.makedirs(IN_MEDIA,     exist_ok=True)
-	os.makedirs(STATS_CSV,    exist_ok=True)
-
 	if (LOCAL_TMP.is_dir()):
 		shutil.rmtree(LOCAL_TMP)
-	os.makedirs(LOCAL_TMP,         exist_ok=True)
+	for i in [USER_PRIVATE, IN_FOLDER, IN_MEDIA, STATS_CSV, LOCAL_TMP]:
+		os.makedirs(i, exist_ok=True)
 
 	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(CONFIG.THREADS)]
 
