@@ -805,8 +805,8 @@ class To_vaav1(Operation):
 		if (out_bytes > in_bytes):
 			append_line(self.op_info, string="bigger than source")
 			store_bytes = False
-			append_line(self.op_info, string="frame mismatch")
 		if (out_frames != in_frames):
+			append_line(self.op_info, string="frame mismatch: "+out_frames+" "+in_frames)
 			store_bytes = False
 
 		if (out_frames > in_frames):
@@ -939,7 +939,7 @@ class To_aomav1(Operation):
 			append_line(self.op_info, string="bigger than source")
 			store_bytes = False
 		if (out_frames != in_frames):
-			append_line(self.op_info, string="frame mismatch")
+			append_line(self.op_info, string="frame mismatch: "+out_frames+" "+in_frames)
 			store_bytes = False
 
 		if (out_frames > in_frames):
