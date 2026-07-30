@@ -604,11 +604,8 @@ class To_avif(Operation):
 		best = None
 		for i in self.cache:
 			j = self.cache[i]
-			if (self.path.stat().st_size < len(j.outBytes)):
+			if (len(j.outBytes) == 0):
 				continue
-			if (j.psnr < self.psnr_min):
-				continue
-
 			if (not best):
 				best = j
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
@@ -642,6 +639,8 @@ class To_avif(Operation):
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
+
+		store_bytes = True
 
 		append_line(self.op_info, string="doing: " + str(q))
 
@@ -678,19 +677,30 @@ class To_avif(Operation):
 		append_line(self.op_info, string="done")
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 
-		# compare against original
-		psnr = float("+inf")
-		if (self.path.stat().st_size < self.op_destination.stat().st_size):
+		in_bytes  = self.path.stat().st_size
+		out_bytes = self.op_destination.stat().st_size
+		if (out_bytes > in_bytes):
 			append_line(self.op_info, string="bigger than source")
+			store_bytes = False
+
+		# compare against original
+		psnr = None
+		if (out_bytes > in_bytes):
+			psnr = float("+inf")
 		else:
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
 			append_line(self.op_info, string="psnr " + str(psnr))
+		if (psnr < self.psnr_min):
+			store_bytes = False
 
 		y = psnr - self.psnr_target
 		# Store results to cache
-		self.cache[input_hash] = Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, read_binary_file(self.op_destination), psnr, y)
+		data = b''
+		if (store_bytes):
+			data = read_binary_file(self.op_destination)
+		self.cache[input_hash] = Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, data, psnr, y)
 
 		self.op_destination.unlink()
 		return y
