@@ -78,8 +78,10 @@ def grep(pattern: re.Pattern, string: str, idx=0):
 		return ""
 	return result[idx]
 
-def append_line(file_path: str, string="", csv=[]) -> None:
-	line=str(string)
+def append_line(file_path: str, strings=[""], csv=[]) -> None:
+	line=""
+	for i in strings:
+		line += str(i)
 	for i in csv:
 		line += ","+str(i)
 
@@ -590,7 +592,7 @@ class To_avif(Operation):
 		failures = 0
 		for i in ["444", "422", "420"]:
 			self.encode_yuv = i
-			append_line(self.op_info, string="\n" + "YUV " + i)
+			append_line(self.op_info, strings=["\n", "YUV ", i])
 
 			try:
 				msg_info.print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.49))
@@ -620,7 +622,7 @@ class To_avif(Operation):
 		stat_y       = ""
 		if (best):
 			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, string="best: "+str(best.yuv)+" "+str(best.q)+" "+str(best.psnr))
+			append_line(self.op_info, strings=["best: ", best.yuv, " ", best.q, " ". best.psnr])
 			stat_yuv     = best.yuv
 			stat_q       = best.q
 			stat_outSize = len(best.outBytes)
@@ -642,7 +644,7 @@ class To_avif(Operation):
 
 		store_bytes = True
 
-		append_line(self.op_info, string="doing: " + str(q))
+		append_line(self.op_info, strings=["doing: ", q])
 
 		# cicp CP/TC/MC
 		# https://github.com/AOMediaCodec/libavif/wiki/CICP
@@ -674,13 +676,13 @@ class To_avif(Operation):
 			else:
 				raise
 
-		append_line(self.op_info, string="done")
+		append_line(self.op_info, strings=["done"])
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 
 		in_bytes  = self.path.stat().st_size
 		out_bytes = self.op_destination.stat().st_size
 		if (out_bytes > in_bytes):
-			append_line(self.op_info, string="bigger than source")
+			append_line(self.op_info, strings=["bigger than source"])
 			store_bytes = False
 
 		# compare against original
@@ -691,7 +693,7 @@ class To_avif(Operation):
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, string="psnr " + str(psnr))
+			append_line(self.op_info, strings=["psnr ", psnr])
 		if (psnr < self.psnr_min):
 			store_bytes = False
 
@@ -774,7 +776,7 @@ class To_vaav1(Operation):
 		stat_y       = ""
 		if (best):
 			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, string="best: "+str(best.q)+" "+str(best.psnr)+" "+str(best.vmaf))
+			append_line(self.op_info, strings=["best: ", best.q, " ", best.psnr, " ", best.vmaf])
 			stat_q       = best.q
 			stat_outSize = len(best.outBytes)
 			stat_psnr    = best.psnr
@@ -796,9 +798,9 @@ class To_vaav1(Operation):
 
 		store_bytes = True
 
-		append_line(self.op_info, string="doing: " + str(q))
+		append_line(self.op_info, strings=["doing: ", q])
 		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q, max_bytes=self.path.stat().st_size).run()
-		append_line(self.op_info, string="done")
+		append_line(self.op_info, strings=["done"])
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
@@ -813,10 +815,10 @@ class To_vaav1(Operation):
 		out_frames = ffmpeg_stats.frames()
 
 		if (out_bytes > in_bytes):
-			append_line(self.op_info, string="bigger than source")
+			append_line(self.op_info, strings=["bigger than source"])
 			store_bytes = False
 		if (out_frames != in_frames):
-			append_line(self.op_info, string="frame mismatch: "+out_frames+" "+in_frames)
+			append_line(self.op_info, strings=["frame mismatch: ", out_frames, " ", in_frames])
 			store_bytes = False
 
 		if (out_frames > in_frames):
@@ -832,7 +834,7 @@ class To_vaav1(Operation):
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, string="psnr " + str(psnr))
+			append_line(self.op_info, strings=["psnr ", psnr])
 		if (psnr < self.psnr_min):
 			store_bytes = False
 
@@ -845,7 +847,7 @@ class To_vaav1(Operation):
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
-			append_line(self.op_info, string="vmaf " + str(vmaf))
+			append_line(self.op_info, strings=["vmaf ", vmaf])
 		if (vmaf < self.vmaf_min):
 			store_bytes = False
 
@@ -907,7 +909,7 @@ class To_aomav1(Operation):
 		stat_y       = ""
 		if (best):
 			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, string="best: "+str(best.crf)+" "+str(best.psnr)+" "+str(best.vmaf))
+			append_line(self.op_info, strings=["best: ", best.crf, " ", best.psnr, " ", best.vmaf])
 			stat_crf     = best.crf
 			stat_outSize = len(best.outBytes)
 			stat_psnr    = best.psnr
@@ -929,9 +931,9 @@ class To_aomav1(Operation):
 
 		store_bytes = True
 
-		append_line(self.op_info, string="doing: " + str(crf))
+		append_line(self.op_info, strings=["doing: ", crf])
 		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf, max_bytes=self.path.stat().st_size).run()
-		append_line(self.op_info, string="done")
+		append_line(self.op_info, strings=["done"])
 		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
@@ -946,10 +948,10 @@ class To_aomav1(Operation):
 		out_frames = ffmpeg_stats.frames()
 	
 		if (out_bytes > in_bytes):
-			append_line(self.op_info, string="bigger than source")
+			append_line(self.op_info, strings=["bigger than source"])
 			store_bytes = False
 		if (out_frames != in_frames):
-			append_line(self.op_info, string="frame mismatch: "+out_frames+" "+in_frames)
+			append_line(self.op_info, strings=["frame mismatch: ", out_frames, " ", in_frames])
 			store_bytes = False
 
 		if (out_frames > in_frames):
@@ -965,7 +967,7 @@ class To_aomav1(Operation):
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
 			ffmpeg_psnr.run()
 			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, string="psnr " + str(psnr))
+			append_line(self.op_info, strings=["psnr ", psnr])
 		if (psnr < self.psnr_min):
 			store_bytes = False
 
@@ -978,7 +980,7 @@ class To_aomav1(Operation):
 			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
 			ffmpeg_vmaf.run()
 			vmaf = ffmpeg_vmaf.vmaf()
-			append_line(self.op_info, string="vmaf " + str(vmaf))
+			append_line(self.op_info, strings=["vmaf ", vmaf])
 		if (vmaf < self.vmaf_min):
 			store_bytes = False
 
