@@ -312,7 +312,7 @@ class Ffmpeg_random(Ffmpeg):
 
 class Ffmpeg_stats(Ffmpeg):
 	def set(self, path:Path):
-		super().set(["-hide_banner", "-i", path, "-f", "null", "/dev/null"])
+		super().set(["-hide_banner", "-i", path, "-c", "copy", "-f", "null", "-y", "/dev/null"])
 		return self
 	def run(self):
 		result = super().run()
@@ -320,7 +320,7 @@ class Ffmpeg_stats(Ffmpeg):
 		return result
 	def frames(self):
 		tmp_re = grep(r'frame=\s*[1-9][0-9]*', self.stderr)
-		return grep(r'[1-9][0-9]*', tmp_re)
+		return int(grep(r'[1-9][0-9]*', tmp_re))
 
 	def resolution(self):
 		tmp_re = grep(r'Stream.*Video.*',         self.stderr)
@@ -805,12 +805,17 @@ class To_vaav1(Operation):
 		if (out_bytes > in_bytes):
 			append_line(self.op_info, string="bigger than source")
 			store_bytes = False
-		elif (out_frames != in_frames):
 			append_line(self.op_info, string="frame mismatch")
+		if (out_frames != in_frames):
 			store_bytes = False
 
+		if (out_frames > in_frames):
+			raise ValueError
+		elif ((out_frames < in_frames) and (out_bytes <= in_bytes)):
+			raise ValueError
+
 		psnr = None
-		if ((out_bytes > in_bytes) or (out_frames < in_frames)):
+		if ((out_bytes > in_bytes) or (out_frames != in_frames)):
 			# If out frames are less, assume -fs was triggered
 			psnr = float("+inf")
 		else:
@@ -937,8 +942,13 @@ class To_aomav1(Operation):
 			append_line(self.op_info, string="frame mismatch")
 			store_bytes = False
 
+		if (out_frames > in_frames):
+			raise ValueError
+		elif ((out_frames < in_frames) and (out_bytes <= in_bytes)):
+			raise ValueError
+
 		psnr = None
-		if ((out_bytes > in_bytes) or (out_frames < in_frames)):
+		if ((out_bytes > in_bytes) or (out_frames != in_frames)):
 			# If out frames are less, assume -fs was triggered
 			psnr = float("+inf")
 		else:
