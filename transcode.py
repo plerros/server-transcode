@@ -622,7 +622,7 @@ class To_avif(Operation):
 		stat_y       = ""
 		if (best):
 			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, strings=["best: ", best.yuv, " ", best.q, " ". best.psnr])
+			append_line(self.op_info, strings=["best: ", best.yuv, " ", best.q, " ", best.psnr])
 			stat_yuv     = best.yuv
 			stat_q       = best.q
 			stat_outSize = len(best.outBytes)
