@@ -559,9 +559,7 @@ def psnr_target(path: Path, mse):
 	if (not bits):
 		bits = 8
 
-	msg_error.print("bits" + str(bits))
 	max_I = pow(2.0, bits) - 1.0
-	msg_error.print("max_I" + str(max_I))
 	return (10.0 * math.log(pow(max_I, 2.0) / mse) / math.log(10.0))
 
 class Operation():
