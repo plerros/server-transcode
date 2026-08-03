@@ -335,6 +335,38 @@ class Ffmpeg_stats(Ffmpeg):
 		height = grep(r'[1-9][0-9]*', height)
 
 		return [int(width), int(height)]
+	def bits(self):
+		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
+
+		# yuv
+		yuv_re = grep(r'yuv444p12', tmp_re) + grep(r'yuv422p12', tmp_re) + grep(r'yuv420p12', tmp_re)
+		if (len(yuv_re) != 0):
+			return 12
+		yuv_re = grep(r'yuv422p10', tmp_re) + grep(r'yuv422p10', tmp_re) + grep(r'yuv420p10', tmp_re)
+		if (len(yuv_re) != 0):
+			return 10
+		yuv_re = grep(r'yuv444p', tmp_re)   + grep(r'yuv422p', tmp_re)   + grep(r'yuv420p',   tmp_re)
+		if (len(yuv_re) != 0):
+			return 8
+
+		# rgb
+		rgb_re = grep(r'rgb48', tmp_re) + grep(r'rgba64', tmp_re)
+		if (len(rgb_re) != 0):
+			return 16
+		rgb_re = grep(r'rgb24', tmp_re) + grep(r'rgba32', tmp_re)
+		if (len(rgb_re) != 0):
+			return 8
+
+		# gbr
+		gbr_re = grep(r'gbrapf16', tmp_re)
+		if (len(gbr_re) != 0):
+			return 32
+		gbr_re = grep(r'gbrpf32', tmp_re)
+		if (len(gbr_re) != 0):
+			return 16
+
+		return None
+
 	def check_exec_args(self):
 		ret = ""
 		if (not Ffmpeg_random().works()):
@@ -512,6 +544,26 @@ class Cache_aomav1:
 		ret += "}"
 		return ret
 
+def psnr_min(path: Path, mse):
+	return psnr_target(path, mse) - 1.0
+
+def psnr_target(path: Path, mse):
+	if (not path.is_file()):
+		raise ValueError
+	
+	bits = None
+	ffmpeg_stats = Ffmpeg_stats().set(path)
+	ffmpeg_stats.run()
+	bits = ffmpeg_stats.bits()
+
+	if (not bits):
+		bits = 8
+
+	msg_error.print("bits" + str(bits))
+	max_I = pow(2.0, bits) - 1.0
+	msg_error.print("max_I" + str(max_I))
+	return (10.0 * math.log(pow(max_I, 2.0) / mse) / math.log(10.0))
+
 class Operation():
 	def __init__(self, dependencies, path, outdir):
 		self.dependencies = dependencies
@@ -556,11 +608,12 @@ class Operation():
 		return ret
 
 class To_avif(Operation):
-	def __init__(self, path: Path, outdir: Path, psnr_min, psnr_target):
+	def __init__(self, path: Path, outdir: Path, hq: bool):
 		super().__init__([Avifenc, Exiftool_orientation, Magick_convert, Magick_mogrify_autoorient], path, outdir)
 
-		self.psnr_min    = psnr_min
-		self.psnr_target = psnr_target
+		self.hq = hq
+		self.psnr_min    = None
+		self.psnr_target = None
 
 		self.cache: dict[list[str], Cache_avif] = {}
 		self.encode_yuv = 444
@@ -571,6 +624,12 @@ class To_avif(Operation):
 	def logSuffix(self, path):
 		return path.with_suffix(".avif.log")
 	def run_internal(self):
+		mse = 2.0
+		if (self.hq):
+			mse = 0.1
+		self.psnr_min    = psnr_min(self.path, mse)
+		self.psnr_target = psnr_target(self.path, mse)
+
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
 
@@ -708,12 +767,14 @@ class To_avif(Operation):
 		return y
 
 class To_vaav1(Operation):
-	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
+	def __init__(self, path: Path, outdir: Path, hq: bool):
 		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
-		self.psnr_min    = psnr_min
-		self.psnr_target = psnr_target
-		self.vmaf_min    = vmaf_min
-		self.vmaf_target = vmaf_target
+
+		self.hq = hq
+		self.psnr_min    = None
+		self.psnr_target = None
+		self.vmaf_min    = None
+		self.vmaf_target = None
 
 		self.cache: dict[list[str], Cache_vaav1] = {}
 	def outSuffix(self, path):
@@ -723,6 +784,17 @@ class To_vaav1(Operation):
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
 	def run_internal(self):
+		mse  = 65.0
+		vmaf = 95.0
+		if (self.hq):
+			mse = 3.25
+			vmaf = 98.0
+
+		self.psnr_min    = psnr_min(self.path, mse)
+		self.psnr_target = psnr_target(self.path, mse)
+		self.vmaf_min    = vmaf - 1.0
+		self.vmaf_target = vmaf
+
 		# test for gpu support
 		ffmpeg_stats = Ffmpeg_stats().set(self.path)
 		ffmpeg_stats.run()
@@ -863,13 +935,14 @@ class To_vaav1(Operation):
 		return y
 
 class To_aomav1(Operation):
-	def __init__(self, path: Path, outdir: Path,  psnr_min, psnr_target, vmaf_min, vmaf_target):
+	def __init__(self, path: Path, outdir: Path, hq: bool):
 		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
 
-		self.psnr_min    = psnr_min
-		self.psnr_target = psnr_target
-		self.vmaf_min    = vmaf_min
-		self.vmaf_target = vmaf_target
+		self.hq = hq
+		self.psnr_min    = None
+		self.psnr_target = None
+		self.vmaf_min    = None
+		self.vmaf_target = None
 
 		self.cache: dict[list[str], Cache_aomav1] = {}
 	def outSuffix(self, path):
@@ -879,6 +952,17 @@ class To_aomav1(Operation):
 	def logSuffix(self, path):
 		return path.with_suffix(".aomav1.log")
 	def run_internal(self):
+		mse  = 65.0
+		vmaf = 95.0
+		if (self.hq):
+			mse = 3.25
+			vmaf = 98.0
+
+		self.psnr_min    = psnr_min(self.path, mse)
+		self.psnr_target = psnr_target(self.path, mse)
+		self.vmaf_min    = vmaf - 1.0
+		self.vmaf_target = vmaf
+
 		stat_inType = self.path.suffix
 		stat_inSize = self.path.stat().st_size
 
@@ -1113,39 +1197,20 @@ class File(In_types):
 
 		return True
 
-	def psnr_min(self):
-		if (self.hq):
-			bits = 16
-			return 47+(bits*1.2)
-		return 44
-	def psnr_target(self):
-		if (self.hq):
-			bits = 16
-			return 48+(bits*1.2)
-		return 45
-
 class Image(File):
 	def operations(self):
-		to_avif = To_avif(self.path, self.outdir, self.psnr_min(), self.psnr_target())
+		to_avif = To_avif(self.path, self.outdir, self.hq)
 		return [to_avif] + super().operations()
 	def preRun(self):
 		return
 
 class Video(File):
 	def operations(self):
-		to_vaav1 = To_vaav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
-		to_aomav1 = To_aomav1(self.path, self.outdir, self.psnr_min(), self.psnr_target(), self.vmaf_min(), self.vmaf_target())
+		to_vaav1 = To_vaav1(self.path, self.outdir, self.hq)
+		to_aomav1 = To_aomav1(self.path, self.outdir, self.hq)
 		return [to_vaav1, to_aomav1] + super().operations()
 	def preRun(self):
 		return
-	def psnr_min(self):
-		return 30
-	def psnr_target(self):
-		return 45
-	def vmaf_min(self):
-		return 94
-	def vmaf_target(self):
-		return 95
 
 class Other(File):
 	def compatible(self, path):
@@ -1167,6 +1232,9 @@ class Png(Image):
 		return {".png"}
 	def preRun(self):
 		Optipng().set(self.path).run()
+class Tif(Image):
+	def suffixes(self):
+		return {".tif"}
 class Webp(Image):
 	def suffixes(self):
 		return {".webp"}
