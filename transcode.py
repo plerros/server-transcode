@@ -496,8 +496,7 @@ class Optipng(Command):
 		return self
 
 class Cache_avif:
-	def __init__(self, inBytes, yuv, q, outBytes, psnr, y):
-		self.inBytes  = inBytes
+	def __init__(self, yuv, q, outBytes, psnr, y):
 		self.yuv      = yuv
 		self.q        = q
 		self.outBytes = outBytes
@@ -506,15 +505,13 @@ class Cache_avif:
 
 	def __str__(self):
 		ret =  "{"
-		ret +=    "inBytes: " + str(self.inBytes)
 		ret +=    "yuv: "     + str(self.yuv)
 		ret +=    "q: "       + str(self.q)
 		ret += "}"
 		return ret
 
 class Cache_vaav1:
-	def __init__(self, inBytes, q, outBytes, psnr, vmaf, y):
-		self.inBytes  = inBytes
+	def __init__(self, q, outBytes, psnr, vmaf, y):
 		self.q        = q
 		self.outBytes = outBytes
 		self.psnr     = psnr
@@ -523,14 +520,12 @@ class Cache_vaav1:
 
 	def __str__(self):
 		ret =  "{"
-		ret +=    "inBytes: " + str(self.inBytes)
 		ret +=    "q: "       + str(self.q)
 		ret += "}"
 		return ret
 
 class Cache_aomav1:
-	def __init__(self, inBytes, crf, outBytes, psnr, vmaf, y):
-		self.inBytes  = inBytes
+	def __init__(self, crf, outBytes, psnr, vmaf, y):
 		self.crf      = crf
 		self.outBytes = outBytes
 		self.psnr     = psnr
@@ -539,7 +534,6 @@ class Cache_aomav1:
 
 	def __str__(self):
 		ret =  "{"
-		ret +=    "inBytes: " + str(self.inBytes)
 		ret +=    "crf: "     + str(self.crf)
 		ret += "}"
 		return ret
@@ -694,7 +688,7 @@ class To_avif(Operation):
 
 	def run_operation(self, q: int):
 		q = int(q)
-		input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
+		input_hash = str(Cache_avif(self.encode_yuv, q, None, None, None))
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
@@ -728,7 +722,7 @@ class To_avif(Operation):
 				tmp = self.op_source.with_suffix(".png")
 				Magick_convert().set(self.op_source, tmp).run()
 				self.op_source = tmp
-				input_hash = str(Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, None, None, None))
+				input_hash = str(Cache_avif(self.encode_yuv, q, None, None, None))
 				result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()
 			else:
 				raise
@@ -759,7 +753,7 @@ class To_avif(Operation):
 		data = b''
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
-		self.cache[input_hash] = Cache_avif(read_binary_file(self.op_source), self.encode_yuv, q, data, psnr, y)
+		self.cache[input_hash] = Cache_avif(self.encode_yuv, q, data, psnr, y)
 
 		self.op_destination.unlink()
 		return y
@@ -861,7 +855,7 @@ class To_vaav1(Operation):
 
 	def run_operation(self, q: int):
 		q = int(q)
-		input_hash = str(Cache_vaav1(read_binary_file(self.op_source), q, None, None, None, None))
+		input_hash = str(Cache_vaav1(q, None, None, None, None))
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
@@ -928,7 +922,7 @@ class To_vaav1(Operation):
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
 
-		self.cache[input_hash] = Cache_vaav1(read_binary_file(self.op_source), q, data, psnr, vmaf, y)
+		self.cache[input_hash] = Cache_vaav1(q, data, psnr, vmaf, y)
 		self.op_destination.unlink()
 		return y
 
@@ -1006,7 +1000,7 @@ class To_aomav1(Operation):
 
 	def run_operation(self, crf: int):
 		crf = int(crf)
-		input_hash = str(Cache_aomav1(read_binary_file(self.op_source), crf, None, None, None, None))
+		input_hash = str(Cache_aomav1(crf, None, None, None, None))
 
 		if (self.cache.get(input_hash)):
 			return (self.cache.get(input_hash)).y
