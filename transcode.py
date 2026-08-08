@@ -495,48 +495,41 @@ class Optipng(Command):
 		super().set(["-o7", path])
 		return self
 
-class Cache_avif:
-	def __init__(self, yuv, q, outBytes, psnr, y):
-		self.yuv      = yuv
-		self.q        = q
-		self.outBytes = outBytes
-		self.psnr     = psnr
-		self.y        = y
-
+class Cache:
+	def __init__(self, x, parameters, outBytes, y):
+		self.x         = x
+		self.parameters = parameters
+		self.outBytes   = outBytes
+		self.y          = y
 	def __str__(self):
 		ret =  "{"
-		ret +=    "yuv: "     + str(self.yuv)
-		ret +=    "q: "       + str(self.q)
+		ret +=    "x: "          + str(self.x)
+		ret +=    "parameters: " + str(self.parameters)
+		ret +=    "outBytes: "   + str(self.outBytes)
+		ret +=    "y: "          + str(self.y)
 		ret += "}"
 		return ret
+
+class Cache_avif(Cache):
+	def __init__(self, yuv, q, outBytes, psnr, y):
+		super().__init__(q, (yuv), outBytes, y)
+		self.yuv  = yuv
+		self.q    = q
+		self.psnr = psnr
 
 class Cache_vaav1:
 	def __init__(self, q, outBytes, psnr, vmaf, y):
-		self.q        = q
-		self.outBytes = outBytes
-		self.psnr     = psnr
-		self.vmaf     = vmaf
-		self.y        = y
-
-	def __str__(self):
-		ret =  "{"
-		ret +=    "q: "       + str(self.q)
-		ret += "}"
-		return ret
+		super().__init__(q, None, outBytes, y)
+		self.q    = q
+		self.psnr = psnr
+		self.vmaf = vmaf
 
 class Cache_aomav1:
 	def __init__(self, crf, outBytes, psnr, vmaf, y):
-		self.crf      = crf
-		self.outBytes = outBytes
-		self.psnr     = psnr
-		self.vmaf     = vmaf
-		self.y        = y
-
-	def __str__(self):
-		ret =  "{"
-		ret +=    "crf: "     + str(self.crf)
-		ret += "}"
-		return ret
+		super().__init__(crf, None, outBytes, y)
+		self.crf  = crf
+		self.psnr = psnr
+		self.vmaf = vmaf
 
 def psnr_min(path: Path, mse):
 	return psnr_target(path, mse) - 1.0
