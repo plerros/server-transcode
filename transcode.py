@@ -517,14 +517,14 @@ class Cache_avif(Cache):
 		self.q    = q
 		self.psnr = psnr
 
-class Cache_vaav1:
+class Cache_vaav1(Cache):
 	def __init__(self, q, outBytes, psnr, vmaf, y):
 		super().__init__(q, None, outBytes, y)
 		self.q    = q
 		self.psnr = psnr
 		self.vmaf = vmaf
 
-class Cache_aomav1:
+class Cache_aomav1(Cache):
 	def __init__(self, crf, outBytes, psnr, vmaf, y):
 		super().__init__(crf, None, outBytes, y)
 		self.crf  = crf
@@ -1060,7 +1060,7 @@ class To_aomav1(Operation):
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
 
-		self.cache[input_hash] = Cache_aomav1(read_binary_file(self.op_source), crf, data, psnr, vmaf, y)
+		self.cache[input_hash] = Cache_aomav1(crf, data, psnr, vmaf, y)
 		self.op_destination.unlink()
 		return y
 
