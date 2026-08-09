@@ -496,40 +496,22 @@ class Optipng(Command):
 		return self
 
 class Cache:
-	def __init__(self, x, parameters, outBytes, y):
+	def __init__(self, x, parameters, outBytes, y, statistics):
 		self.x         = x
 		self.parameters = parameters
 		self.outBytes   = outBytes
 		self.y          = y
+		self.statistics = statistics
 	def __str__(self):
 		ret =  "{"
 		ret +=    "x: "          + str(self.x)
 		ret +=    "parameters: " + str(self.parameters)
 		ret +=    "outBytes: "   + str(self.outBytes)
 		ret +=    "y: "          + str(self.y)
+		for i in self.statistics:
+			ret += i[0] + " " + str(i[1])
 		ret += "}"
 		return ret
-
-class Cache_avif(Cache):
-	def __init__(self, yuv, q, outBytes, psnr, y):
-		super().__init__(q, (yuv), outBytes, y)
-		self.yuv  = yuv
-		self.q    = q
-		self.psnr = psnr
-
-class Cache_vaav1(Cache):
-	def __init__(self, q, outBytes, psnr, vmaf, y):
-		super().__init__(q, None, outBytes, y)
-		self.q    = q
-		self.psnr = psnr
-		self.vmaf = vmaf
-
-class Cache_aomav1(Cache):
-	def __init__(self, crf, outBytes, psnr, vmaf, y):
-		super().__init__(crf, None, outBytes, y)
-		self.crf  = crf
-		self.psnr = psnr
-		self.vmaf = vmaf
 
 def psnr_min(path: Path, mse):
 	return psnr_target(path, mse) - 1.0
@@ -550,10 +532,11 @@ def psnr_target(path: Path, mse):
 	return (10.0 * math.log(pow(max_I, 2.0) / mse) / math.log(10.0))
 
 class Operation():
-	def __init__(self, dependencies, path, outdir):
+	def __init__(self, dependencies, path, outdir, statsFile=None):
 		self.dependencies = dependencies
-		self.path   = path
-		self.outdir = outdir
+		self.path         = path
+		self.outdir       = outdir
+		self.statsFile    = statsFile
 
 		# files used by run_operation()
 		self.op_source      = self.path
@@ -575,16 +558,31 @@ class Operation():
 			if (i.is_file()):
 				return True
 		return False
-
 	def run(self):
 		for i in self.dependencies:
 			if(not i().works()):
-				return
+				return False
 
+		ret = True
+		statistics =  [("inType", self.path.suffix)]
+		statistics += [("inSize", self.path.stat().st_size)]
 		try:
-			ret = self.run_internal()
+			tmp = self.run_operation()
+			if tmp is None:
+				ret = False
+			else:
+				statistics += [("outSize", self.op_destination.stat().st_size)]
+				statistics += tmp
 		except subprocess.CalledProcessError:
 			ret = False
+
+		if (ret and self.statsFile):
+			csv_header = []
+			csv_line   = []
+			for i in statistics:
+				csv_header += [i[0]]
+				csv_line   += [i[1]]
+			append_line(self.statsFile, csv=csv_line)
 
 		os.makedirs(self.outdir, exist_ok=True)
 		for i in [self.op_destination, self.op_info, self.op_log]:
@@ -592,34 +590,84 @@ class Operation():
 				os.rename(i, self.outdir / i.name)
 		return ret
 
-class To_avif(Operation):
+class Brentq_scalar(Operation):
+	def __init__(self, dependencies, path, outdir, statsFile, lower_bound, upper_bound):
+		super().__init__(dependencies, path, outdir, statsFile)
+		lower_bound = int(lower_bound)
+		upper_bound = int(upper_bound)
+		if (lower_bound > upper_bound):
+			lower_bound, upper_bound = upper_bound, lower_bound
+		self.lower_bound = lower_bound
+		self.upper_bound = upper_bound
+		self.cache: dict[list[str], Cache] = {}
+	def preRun(self):
+		return True
+	def cached_f(self, x):
+		x = int(x)
+		idx = str(self.cache_index(x))
+		tmp = self.cache.get(idx)
+		if (tmp):
+			return tmp.y
+		tmp = self.f(x)
+		self.cache[idx] = tmp
+		return tmp.y
+	def brentq(self):
+		try:
+			msg_info.print(root_scalar(self.cached_f, bracket=[self.lower_bound, self.upper_bound], method='brentq', xtol=0.49))
+		except ValueError as e:
+			msg_info.print(e)
+			return False
+		return True
+	def run_operation(self):
+		self.set_variables()
+		if not self.preRun():
+			return None
+		if not self.brentq():
+			return None
+
+		best = None
+		for i in self.cache:
+			j = self.cache[i]
+			if (len(j.outBytes) == 0):
+				continue
+			if (not best):
+				best = j
+			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
+				best = j
+	
+		if best is not None:
+			write_binary_file(self.op_destination, best.outBytes)
+			csv_line = []
+			for i in best.statistics:
+				csv_line += [" "+str(i[1])]
+			append_line(self.op_info, strings=["best:"]+csv_line)
+
+		return [("y", best.y)] + best.statistics
+
+class To_avif(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
-		super().__init__([Avifenc, Exiftool_orientation, Magick_convert, Magick_mogrify_autoorient], path, outdir)
+		super().__init__([Avifenc, Exiftool_orientation, Magick_convert, Magick_mogrify_autoorient], path, outdir, STATS_CSV / "to_avif.csv", 0, 100)
 
 		self.hq = hq
 		self.psnr_min    = None
 		self.psnr_target = None
-
-		self.cache: dict[list[str], Cache_avif] = {}
-		self.encode_yuv = 444
+		self.encode_yuv   = 444
+		self.stat_rotated = False
 	def outSuffix(self, path):
 		return path.with_suffix(".avif")
 	def infoSuffix(self, path):
 		return path.with_suffix(".avif.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".avif.log")
-	def run_internal(self):
+	def set_variables(self):
 		mse = 2.0
 		if (self.hq):
 			mse = 0.1
 		self.psnr_min    = psnr_min(self.path, mse)
 		self.psnr_target = psnr_target(self.path, mse)
 
-		stat_inType = self.path.suffix
-		stat_inSize = self.path.stat().st_size
-
+	def preRun(self):
 		# rotation
-		stat_rotated = False
 		result = Exiftool_orientation().set(self.op_source).run()
 		if (grep(r'Rotate', result.stdout.decode('utf‑8'))):
 			rotated = self.op_source.with_suffix(".rotated" + self.op_source.suffix)
@@ -630,64 +678,25 @@ class To_avif(Operation):
 			ffmpeg_psnr.run()
 			if (ffmpeg_psnr.psnr() > self.psnr_target + 5):
 				self.op_source = rotated
-				stat_rotated = True
+				self.stat_rotated = True
+		return True
 
+	def brentq(self):
 		# brentq
 		failures = 0
 		for i in ["444", "422", "420"]:
 			self.encode_yuv = i
 			append_line(self.op_info, strings=["\n", "YUV ", i])
 
-			try:
-				msg_info.print(root_scalar(self.run_operation, bracket=[0, 100], method='brentq', xtol=0.49))
-			except ValueError:
+			if (not super().brentq()):
 				failures += 1
 
-		if (failures == 3):
-			return False
+		return (failures < 3)
 
-		# find best
-		best = None
-		for i in self.cache:
-			j = self.cache[i]
-			if (len(j.outBytes) == 0):
-				continue
-			if (not best):
-				best = j
-			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
-				best = j
-
-		ret = True
-
-		stat_yuv     = ""
-		stat_q       = ""
-		stat_outSize = ""
-		stat_psnr    = ""
-		stat_y       = ""
-		if (best):
-			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, strings=["best: ", best.yuv, " ", best.q, " ", best.psnr])
-			stat_yuv     = best.yuv
-			stat_q       = best.q
-			stat_outSize = len(best.outBytes)
-			stat_psnr    = best.psnr
-			stat_y       = best.y
-		else:
-			msg_error.print("best not found")
-			ret = False
-
-		append_line(STATS_CSV / "to_avif.csv", csv=[stat_inType, stat_inSize, stat_rotated, stat_yuv, stat_q, stat_outSize, stat_psnr, stat_y])
-		return ret
-
-	def run_operation(self, q: int):
-		q = int(q)
-		input_hash = str(Cache_avif(self.encode_yuv, q, None, None, None))
-
-		if (self.cache.get(input_hash)):
-			return (self.cache.get(input_hash)).y
-
+	def cache_index(self, q: int):
+		return Cache(q, (self.encode_yuv), None, None, [])
+	def f(self, q: int):
 		store_bytes = True
-
 		append_line(self.op_info, strings=["doing: ", q])
 
 		# cicp CP/TC/MC
@@ -715,7 +724,6 @@ class To_avif(Operation):
 				tmp = self.op_source.with_suffix(".png")
 				Magick_convert().set(self.op_source, tmp).run()
 				self.op_source = tmp
-				input_hash = str(Cache_avif(self.encode_yuv, q, None, None, None))
 				result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()
 			else:
 				raise
@@ -746,14 +754,13 @@ class To_avif(Operation):
 		data = b''
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
-		self.cache[input_hash] = Cache_avif(self.encode_yuv, q, data, psnr, y)
 
 		self.op_destination.unlink()
-		return y
+		return Cache(q, (self.encode_yuv), data, y, [("rotated", self.stat_rotated), ("yuv", self.encode_yuv), ("q", q), ("psnr", psnr)])
 
-class To_vaav1(Operation):
+class To_vaav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
-		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
+		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_vaav1.csv", 1, 255)
 
 		self.hq = hq
 		self.psnr_min    = None
@@ -761,14 +768,13 @@ class To_vaav1(Operation):
 		self.vmaf_min    = None
 		self.vmaf_target = None
 
-		self.cache: dict[list[str], Cache_vaav1] = {}
 	def outSuffix(self, path):
 		return path.with_suffix(".vaav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".vaav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
-	def run_internal(self):
+	def set_variables(self):
 		mse  = 65.0
 		vmaf = 95.0
 		if (self.hq):
@@ -779,7 +785,8 @@ class To_vaav1(Operation):
 		self.psnr_target = psnr_target(self.path, mse)
 		self.vmaf_min    = vmaf - 1.0
 		self.vmaf_target = vmaf
-
+		self.stat_cropped = False
+	def preRun(self):
 		# test for gpu support
 		ffmpeg_stats = Ffmpeg_stats().set(self.path)
 		ffmpeg_stats.run()
@@ -791,68 +798,21 @@ class To_vaav1(Operation):
 			return False
 		
 		op_resolution = []
-		stat_cropped  = False
 		for i in resolution:
 			tmp = i - (i % CONFIG.VAAV1_RESOLUTION_MODULO)
 			op_resolution += [tmp]
 			if (tmp != i):
-				stat_cropped = True
+				self.stat_cropped = True
 
 		if (stat_cropped):
 			self.op_source = self.path.with_suffix(".croppped" + self.path.suffix)
 			ffmpeg_crop = Ffmpeg_crop().set(self.path, self.op_source, op_resolution)
 			ffmpeg_crop.run()
+		return True
 
-
-		stat_inType = self.path.suffix
-		stat_inSize = self.path.stat().st_size
-
-		# brentq
-		try:
-			msg_info.print(root_scalar(self.run_operation, bracket=[1, 255], method='brentq', xtol=0.49))
-		except ValueError:
-			return False
-
-		# best
-		best = None
-		for i in self.cache:
-			j = self.cache[i]
-			if (len(j.outBytes) == 0):
-				continue
-			if (not best):
-				best = j
-			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
-				best = j
-
-		ret = True
-
-		stat_q     = ""
-		stat_outSize = ""
-		stat_psnr    = ""
-		stat_vmaf    = ""
-		stat_y       = ""
-		if (best):
-			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, strings=["best: ", best.q, " ", best.psnr, " ", best.vmaf])
-			stat_q       = best.q
-			stat_outSize = len(best.outBytes)
-			stat_psnr    = best.psnr
-			stat_vmaf    = best.vmaf
-			stat_y       = best.y
-		else:
-			msg_info.print("best not found")
-			ret = False
-
-		append_line(STATS_CSV / "to_vaav1.csv", csv=[stat_inType, stat_inSize, stat_q, stat_outSize, stat_psnr, stat_vmaf, stat_y])
-		return ret
-
-	def run_operation(self, q: int):
-		q = int(q)
-		input_hash = str(Cache_vaav1(q, None, None, None, None))
-
-		if (self.cache.get(input_hash)):
-			return (self.cache.get(input_hash)).y
-
+	def cache_index(self, q:int):
+		return Cache(q, None, None, None, [])
+	def f(self, q: int):
 		store_bytes = True
 
 		append_line(self.op_info, strings=["doing: ", q])
@@ -915,28 +875,25 @@ class To_vaav1(Operation):
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
 
-		self.cache[input_hash] = Cache_vaav1(q, data, psnr, vmaf, y)
 		self.op_destination.unlink()
-		return y
+		return Cache(q, None, data, y, [("cropped", self.stat_cropped), ("q", q), ("psnr", psnr), ("vmaf", vmaf)])
 
-class To_aomav1(Operation):
+class To_aomav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
-		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir)
+		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_aomav1.csv", 1, 63)
 
 		self.hq = hq
 		self.psnr_min    = None
 		self.psnr_target = None
 		self.vmaf_min    = None
 		self.vmaf_target = None
-
-		self.cache: dict[list[str], Cache_aomav1] = {}
 	def outSuffix(self, path):
 		return path.with_suffix(".aomav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".aomav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".aomav1.log")
-	def run_internal(self):
+	def set_variables(self):
 		mse  = 65.0
 		vmaf = 95.0
 		if (self.hq):
@@ -947,57 +904,9 @@ class To_aomav1(Operation):
 		self.psnr_target = psnr_target(self.path, mse)
 		self.vmaf_min    = vmaf - 1.0
 		self.vmaf_target = vmaf
-
-		stat_inType = self.path.suffix
-		stat_inSize = self.path.stat().st_size
-
-		# brentq
-		try:
-			msg_info.print(root_scalar(self.run_operation, bracket=[1, 63], method='brentq', xtol=0.49))
-		except ValueError as e:
-			print(e)
-			return False
-
-		# best
-		best = None
-		for i in self.cache:
-			j = self.cache[i]
-			if (len(j.outBytes) == 0):
-				continue
-			if (not best):
-				best = j
-			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
-				best = j
-
-		ret = True
-
-		stat_crf     = ""
-		stat_outSize = ""
-		stat_psnr    = ""
-		stat_vmaf    = ""
-		stat_y       = ""
-		if (best):
-			write_binary_file(self.op_destination, best.outBytes)
-			append_line(self.op_info, strings=["best: ", best.crf, " ", best.psnr, " ", best.vmaf])
-			stat_crf     = best.crf
-			stat_outSize = len(best.outBytes)
-			stat_psnr    = best.psnr
-			stat_vmaf    = best.vmaf
-			stat_y       = best.y
-		else:
-			msg_error.print("best not found")
-			ret = False
-
-		append_line(STATS_CSV / "to_aomav1.csv", csv=[stat_inType, stat_inSize, stat_crf, stat_outSize, stat_psnr, stat_vmaf, stat_y])
-		return ret
-
-	def run_operation(self, crf: int):
-		crf = int(crf)
-		input_hash = str(Cache_aomav1(crf, None, None, None, None))
-
-		if (self.cache.get(input_hash)):
-			return (self.cache.get(input_hash)).y
-
+	def cache_index(self, crf: int):
+		return Cache(crf, None, None, None, [])
+	def f(self, crf: int):
 		store_bytes = True
 
 		append_line(self.op_info, strings=["doing: ", crf])
@@ -1060,9 +969,8 @@ class To_aomav1(Operation):
 		if (store_bytes):
 			data = read_binary_file(self.op_destination)
 
-		self.cache[input_hash] = Cache_aomav1(crf, data, psnr, vmaf, y)
 		self.op_destination.unlink()
-		return y
+		return Cache(crf, None, data, y, [("crf", crf), ("psnr", psnr), ("vmaf", vmaf)])
 
 class Copy(Operation):
 	def __init__(self, path: Path, outdir: Path):
