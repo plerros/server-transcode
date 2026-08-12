@@ -635,13 +635,14 @@ class Brentq_scalar(Operation):
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
 	
-		if best is not None:
-			write_binary_file(self.op_destination, best.outBytes)
-			csv_line = []
-			for i in best.statistics:
-				csv_line += [" "+str(i[1])]
-			append_line(self.op_info, strings=["best:"]+csv_line)
-
+		if best not None:
+			return None
+		
+		write_binary_file(self.op_destination, best.outBytes)
+		csv_line = []
+		for i in best.statistics:
+			csv_line += [" "+str(i[1])]
+		append_line(self.op_info, strings=["best:"]+csv_line)
 		return [("y", best.y)] + best.statistics
 
 class To_avif(Brentq_scalar):
