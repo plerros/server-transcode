@@ -635,7 +635,7 @@ class Brentq_scalar(Operation):
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
 
-		if best is not None:
+		if best is None:
 			return None
 
 		write_binary_file(self.op_destination, best.outBytes)
