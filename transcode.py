@@ -277,7 +277,7 @@ class Ffmpeg_crop(Ffmpeg):
 		Ffmpeg_random().set(random_in).run()
 		self.set(random_in, random_out, [1918, 1078])
 		self.run()
-		
+
 		ffmpeg_stats = Ffmpeg_stats().set(random_out)
 		ffmpeg_stats.run()
 		resolution = ffmpeg_stats.resolution()
@@ -519,7 +519,7 @@ def psnr_min(path: Path, mse):
 def psnr_target(path: Path, mse):
 	if (not path.is_file()):
 		raise ValueError
-	
+
 	bits = None
 	ffmpeg_stats = Ffmpeg_stats().set(path)
 	ffmpeg_stats.run()
@@ -634,10 +634,10 @@ class Brentq_scalar(Operation):
 				best = j
 			if (math.log(len(j.outBytes), 10) * abs(j.y) < math.log(len(best.outBytes),10) * abs(best.y)):
 				best = j
-	
-		if best not None:
+
+		if best is not None:
 			return None
-		
+
 		write_binary_file(self.op_destination, best.outBytes)
 		csv_line = []
 		for i in best.statistics:
@@ -797,7 +797,7 @@ class To_vaav1(Brentq_scalar):
 			return False
 		if (resolution[1] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
 			return False
-		
+
 		op_resolution = []
 		for i in resolution:
 			tmp = i - (i % CONFIG.VAAV1_RESOLUTION_MODULO)
@@ -925,7 +925,7 @@ class To_aomav1(Brentq_scalar):
 		ffmpeg_stats = Ffmpeg_stats().set(self.op_destination)
 		ffmpeg_stats.run()
 		out_frames = ffmpeg_stats.frames()
-	
+
 		if (out_bytes > in_bytes):
 			append_line(self.op_info, strings=["bigger than source"])
 			store_bytes = False
@@ -1212,11 +1212,11 @@ class Transcode:
 			for i in source.list():
 				if (not self.set(i)):
 					continue
-				
+
 				if (type(self.datatype) is Other):
 					self.run()
 					continue
-				
+
 				break
 		time_total = time.time() - time_start
 		self.run()
@@ -1237,7 +1237,7 @@ def multiplexer(lock_media, lock_folder):
 		transcode  = Transcode()
 		time_total = 0.0
 		seconds    = 10.0
-		
+
 		for i in subclasses(source):
 			time_total += transcode.pick(i())
 
