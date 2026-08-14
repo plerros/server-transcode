@@ -805,7 +805,7 @@ class To_vaav1(Brentq_scalar):
 			if (tmp != i):
 				self.stat_cropped = True
 
-		if (stat_cropped):
+		if (self.stat_cropped):
 			self.op_source = self.path.with_suffix(".croppped" + self.path.suffix)
 			ffmpeg_crop = Ffmpeg_crop().set(self.path, self.op_source, op_resolution)
 			ffmpeg_crop.run()
