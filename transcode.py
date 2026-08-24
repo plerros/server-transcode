@@ -291,7 +291,14 @@ class Ffmpeg_crop(Ffmpeg):
 
 class Ffmpeg_psnr(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "psnr", "-f", "null", "-"])
+		ffmpeg_stats = Ffmpeg_stats().set(original)
+		ffmpeg_stats.run()
+		original_timebase = ffmpeg_stats.timebase()
+		ffmpeg_stats = Ffmpeg_stats().set(transcoded)
+		ffmpeg_stats.run()
+		transcoded_timebase = ffmpeg_stats.timebase()
+		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]psnr", "-f", "null", "-"])
 		return self
 	def run(self):
 		result = super().run()
@@ -366,6 +373,19 @@ class Ffmpeg_stats(Ffmpeg):
 			return 16
 
 		return None
+	def timebase(self):
+		tmp_re     = grep(r'Stream.*Video.*',                 self.stderr)
+		tmp_re     = grep(r'[1-9][0-9]*\.?[0-9]*[kmbt]? tbn', tmp_re)
+		tmp_re     = grep(r'[1-9][0-9]*\.?[0-9]*[kmbt]?',     tmp_re)
+		number     = grep(r'[1-9][0-9]*\.*[0-9]*',            tmp_re)
+		multiplier = grep(r'[kmbt]?',                         tmp_re)
+
+		number = float(number)
+		if (multiplier):
+			multipliers = {'k': 1_000, 'm': 1_000_000, 'b': 1_000_000_000, 't': 1_000_000_000_000}
+			number *= multipliers[multiplier]
+
+		return int(number)
 
 	def check_exec_args(self):
 		ret = ""
@@ -436,7 +456,14 @@ class Ffmpeg_vaav1(Ffmpeg):
 
 class Ffmpeg_vmaf(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
-		super().set(["-i", transcoded, "-i", original, "-lavfi", "libvmaf", "-f", "null", "-"])
+		ffmpeg_stats = Ffmpeg_stats().set(original)
+		ffmpeg_stats.run()
+		original_timebase = ffmpeg_stats.timebase()
+		ffmpeg_stats = Ffmpeg_stats().set(transcoded)
+		ffmpeg_stats.run()
+		transcoded_timebase = ffmpeg_stats.timebase()
+		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]libvmaf", "-f", "null", "-"])
 		self.stderr = ""
 		return self
 	def run(self):
