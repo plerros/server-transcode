@@ -10,6 +10,7 @@ from   scipy.optimize import root_scalar
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -314,6 +315,41 @@ class Ffmpeg_psnr(Ffmpeg):
 
 		return float(finite)
 
+class Ffmpeg_ssim(Ffmpeg):
+	def set(self, original: Path, transcoded: Path):
+		ffmpeg_stats = Ffmpeg_stats().set(original)
+		ffmpeg_stats.run()
+		original_timebase = ffmpeg_stats.timebase()
+		ffmpeg_stats = Ffmpeg_stats().set(transcoded)
+		ffmpeg_stats.run()
+		transcoded_timebase = ffmpeg_stats.timebase()
+		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]ssim", "-f", "null", "-"])
+		return self
+	def run(self):
+		result = super().run()
+		self.stderr = result.stderr.decode('utf-8')
+		return result
+	def ssim(self):
+		tmp_re = grep(r'SSIM.*', self.stderr)
+
+		minimum = float("1.0")
+		for i in ['R', 'G', 'B', 'Y', 'U', 'V']:
+			component = grep(i+r':[0-9]\.[0-9]*', tmp_re)
+			value     = grep(r'[0-9]\.[0-9]*',    tmp_re)
+
+			if (value == ""):
+				continue
+			if (float(value) < minimum):
+				minimum = float(value)
+
+		return minimum
+	def ssim_db(self):
+		tmp = 1.0 - self.ssim()
+		if (tmp == 0.0):
+			tmp = sys.float_info.min
+		return (-10.0 * math.log(tmp) / math.log(10.0))
+
 class Ffmpeg_random(Ffmpeg):
 	def set(self, path:Path):
 		super().set(["-f", "lavfi", "-i", "nullsrc=s=1920x1080:d=1:r=1", "-vf", "geq=random(1)*255:128:128", path])
@@ -474,6 +510,11 @@ class Ffmpeg_vmaf(Ffmpeg):
 		tmp_re = grep(r'VMAF.*'        , self.stderr)
 		tmp_re = grep(r'[0-9]*\.[0-9]*', tmp_re)
 		return float(tmp_re)
+	def vmaf_db(self):
+		tmp = 1.0 - (self.vmaf() / 100.0)
+		if (tmp == 0.0):
+			tmp = sys.float_info.min
+		return (-10.0 * math.log(tmp) / math.log(10.0))
 	def check_exec_args(self):
 		ret = ""
 		if (not Ffmpeg_random().works()):
@@ -488,7 +529,8 @@ class Ffmpeg_vmaf(Ffmpeg):
 
 		try:
 			self.run()
-		except subprocess.CalledProcessError:
+		except subprocess.CalledProcessError as e:
+			msg_error.print(e)
 			ret = "ffmpeg doesn't support libvmaf"
 			functional.set(self, False)
 
