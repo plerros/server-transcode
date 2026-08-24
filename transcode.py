@@ -622,7 +622,7 @@ class Operation():
 			outFiles += [self.outdir / i.name]
 		return outFiles
 
-	def outCollision(self, path, outdir):
+	def outCollision(self):
 		for i in self.outFiles():
 			if (i.is_file()):
 				return True
@@ -1061,6 +1061,8 @@ class Copy(Operation):
 
 class In_types:
 	def __init__(self):
+		self.reset()
+	def reset(self):
 		self.path    = Path()
 		self.outdir  = Path()
 		self.tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
@@ -1070,21 +1072,18 @@ class nop(In_types):
 		return True
 
 class Folder(In_types):
-	def compatible(self, path:Path):
+	def set(self, path:Path, dry_run = False):
 		if (not path.is_dir()):
 			return False
 		if (not path.is_relative_to(IN_FOLDER)):
 			return False
-		return True
-
-	def set(self, path:Path):
-		if (not self.compatible(path)):
-			return False
-
-		self.path = Path(self.tempdir.name) / path.name
-		os.rename(path, self.path)
 
 		self.outdir = OUT / "folder"
+
+		if (not dry_run):
+			self.path = Path(self.tempdir.name) / path.name
+			os.rename(path, self.path)
+
 		return True
 	def run(self):
 		product = self.path.with_suffix(".7z")
@@ -1101,11 +1100,11 @@ class File(In_types):
 		return [Copy(self.path, self.outdir)]
 
 	def outCollision(self):
-		if (self.path == Path()) or (self.outdir == Path()):
+		if (self.outdir == Path()):
 			return True
 
 		for i in self.operations():
-			if (i.outCollision(self.path, self.outdir)):
+			if (i.outCollision()):
 				return True
 		return False
 	def run(self):
@@ -1121,44 +1120,51 @@ class File(In_types):
 			if (i.run()):
 				return True
 		return False
-
-	def compatible(self, path:Path):
-		if (not path.is_file()):
-			return False
-
-		if (path.stat().st_size > CONFIG.MAX_FILE_BYTES):
-			return False
-
-		ret = False
-		compatible_suffixes = self.suffixes()
-		for i in self.suffixes():
-			compatible_suffixes.add(str.upper(i))
-		suffixes = path.suffixes
-		for idx, x in enumerate(path.suffixes):
-			if (''.join(str(i) for i in suffixes[idx:None])) in compatible_suffixes:
-				return True
-		return ret
 	def out_subdir(self, path:Path):
 		return path.suffix
-	def set(self, path:Path):
-		# Compatible suffix
-		if (not self.compatible(path)):
+	def reset(self):
+		super().reset()
+		self.hq = False
+	def set_internal(self, path:Path):
+		# Basic checks
+		if (not path.is_file()):
 			return False
-
-		# Late initialization
-		suffixes = ['', ''] + path.suffixes
-		if (suffixes[-2] == ".hq"):
-			self.hq = True
+		if (path.stat().st_size > CONFIG.MAX_FILE_BYTES):
+			return False
+	
 		self.path = Path(self.tempdir.name) / path.name
 		self.outdir = OUT / self.out_subdir(path)
 		self.outdir = self.outdir / path.parent.relative_to(IN_MEDIA)
 
-		if (self.outCollision()):
+		# Compatible suffix
+		compatible_suffixes = self.suffixes()
+		for i in self.suffixes():
+			compatible_suffixes.add(str.upper(i))
+
+		# [idx:none] suffixes match. Otherwise idx is none
+		idx = None
+		for i,_ in enumerate(path.suffixes):
+			full_text = ''.join(str(j) for j in path.suffixes[i:None])
+			for regex in compatible_suffixes:
+				if (re.fullmatch(regex, full_text)):
+					idx = i
+					break
+		if (idx is None):
 			return False
 
-		os.rename(path, self.path)
-
+		if ((idx > 0) and (path.suffixes[idx-1] == ".hq")):
+			self.hq = True
+		if (self.outCollision()):
+			return False
 		return True
+
+	def set(self, path:Path, dry_run=False):
+		ret = self.set_internal(path)
+		if (dry_run):
+			self.reset()
+		else:
+			os.rename(path, self.path)
+		return ret
 
 class Image(File):
 	def operations(self):
@@ -1182,44 +1188,46 @@ class Other(File):
 		return True
 	def out_subdir(self, path:Path):
 		return "other"
+	def suffixes(self):
+		return {r'.*'}
 	def preRun(self):
 		return
 
 class Jpeg(Image):
 	def suffixes(self):
-		return {".jpg", ".jpeg"}
+		return {r'\.jpg', r'\.jpeg'}
 	def preRun(self):
 		Jpegoptim().set(self.path).run()
 class Png(Image):
 	def suffixes(self):
-		return {".png"}
+		return {r'\.png'}
 	def preRun(self):
 		Optipng().set(self.path).run()
 class Tif(Image):
 	def suffixes(self):
-		return {".tif"}
+		return {r'\.tif'}
 class Webp(Image):
 	def suffixes(self):
-		return {".webp"}
+		return {r'\.webp'}
 
 class Avi(Video):
 	def suffixes(self):
-		return {".avi"}
+		return {r'\.avi'}
 class Mkv(Video):
 	def suffixes(self):
-		return {".h264.mkv"}
+		return {r'\.ffv1\.mkv', r'\.h264\.mkv'}
 class Mov(Video):
 	def suffixes(self):
-		return {".mov"}
+		return {r'\.mov'}
 class Mp4(Video):
 	def suffixes(self):
-		return {".mp4"}
+		return {r'\.mp4'}
 class Webm(Video):
 	def suffixes(self):
-		return {".webm"}
+		return {r'\.webm'}
 class Wmv(Video):
 	def suffixes(self):
-		return {".wmv"}
+		return {r'\.wmv'}
 
 def subclasses(x):
 	todo = x.__subclasses__()
@@ -1257,7 +1265,7 @@ class Transcode:
 		compatible = []
 		for i in [Folder] + subclasses(Image) + subclasses(Video):
 			datatype = i()
-			if (datatype.compatible(path)):
+			if (datatype.set(path, dry_run=True)):
 				compatible += [datatype]
 
 		if (len(compatible) == 0):
