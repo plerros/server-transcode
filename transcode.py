@@ -582,24 +582,6 @@ class Cache:
 		ret += "}"
 		return ret
 
-def psnr_min(path: Path, mse):
-	return psnr_target(path, mse) - 1.0
-
-def psnr_target(path: Path, mse):
-	if (not path.is_file()):
-		raise ValueError
-
-	bits = None
-	ffmpeg_stats = Ffmpeg_stats().set(path)
-	ffmpeg_stats.run()
-	bits = ffmpeg_stats.bits()
-
-	if (not bits):
-		bits = 8
-
-	max_I = pow(2.0, bits) - 1.0
-	return (10.0 * math.log(pow(max_I, 2.0) / mse) / math.log(10.0))
-
 class Operation():
 	def __init__(self, dependencies, path, outdir, statsFile=None):
 		self.dependencies = dependencies
@@ -730,11 +712,11 @@ class To_avif(Brentq_scalar):
 	def logSuffix(self, path):
 		return path.with_suffix(".avif.log")
 	def set_variables(self):
-		mse = 2.0
+		psnr = 45.0
 		if (self.hq):
-			mse = 0.1
-		self.psnr_min    = psnr_min(self.path, mse)
-		self.psnr_target = psnr_target(self.path, mse)
+			psnr = 58.0
+		self.psnr_min    = psnr - 1.0
+		self.psnr_target = psnr
 
 	def preRun(self):
 		# rotation
@@ -845,14 +827,14 @@ class To_vaav1(Brentq_scalar):
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
 	def set_variables(self):
-		mse  = 65.0
+		psnr = 30.0
 		vmaf = 95.0
 		if (self.hq):
-			mse = 3.25
+			psnr = 43.0
 			vmaf = 98.0
 
-		self.psnr_min    = psnr_min(self.path, mse)
-		self.psnr_target = psnr_target(self.path, mse)
+		self.psnr_min    = psnr - 1.0
+		self.psnr_target = psnr
 		self.vmaf_min    = vmaf - 1.0
 		self.vmaf_target = vmaf
 		self.stat_cropped = False
@@ -964,14 +946,14 @@ class To_aomav1(Brentq_scalar):
 	def logSuffix(self, path):
 		return path.with_suffix(".aomav1.log")
 	def set_variables(self):
-		mse  = 65.0
+		psnr = 30.0
 		vmaf = 95.0
 		if (self.hq):
-			mse = 3.25
+			psnr = 43.0
 			vmaf = 98.0
 
-		self.psnr_min    = psnr_min(self.path, mse)
-		self.psnr_target = psnr_target(self.path, mse)
+		self.psnr_min    = psnr - 1.0
+		self.psnr_target = psnr
 		self.vmaf_min    = vmaf - 1.0
 		self.vmaf_target = vmaf
 	def cache_index(self, crf: int):
