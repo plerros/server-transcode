@@ -7,6 +7,7 @@ class CONFIG:
 	MAX_FILE_BYTES = 10 * 1048576 # 10 MB
 
 	THREADS        = os.cpu_count()
+	CMD_CACHE      = THREADS * 100
 
 	# VAAV1_RESOLUTION_MODULO:
 	# If hardware only supports multiples of VAAV1_RESOLUTION_MODULO
