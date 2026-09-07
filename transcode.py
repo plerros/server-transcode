@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import hashlib
 import math
 import multiprocessing
 import os
@@ -26,6 +27,7 @@ LOCAL_TMP    = ROOT / "tmp"
 
 lock_stdout = multiprocessing.Lock()
 lock_gpu    = multiprocessing.Lock()
+lock_cmd_cache = multiprocessing.Lock()
 
 lock_folder = multiprocessing.Lock()
 lock_media  = multiprocessing.Lock()
@@ -98,6 +100,13 @@ def write_binary_file(path: str, data: bytes) -> None:
 	with open(path, "wb") as f:
 		f.write(data)
 
+def hash_file(path, algorithm="sha256", chunk_size=1024 * 1024):
+	h = hashlib.new(algorithm)
+	with open(path, "rb") as f:
+		for chunk in iter(lambda: f.read(chunk_size), b""):
+			h.update(chunk)
+	return h.hexdigest()
+
 def container_permit(file: Path):
 	return ["-v", str(file.parent)+':'+str(file.parent)+":z"]
 
@@ -123,22 +132,54 @@ class Functional():
 
 functional = Functional()
 
+class Command_Cache():
+	def __init__(self):
+		self.cache: dict[str, object] = {}
+	def put(self, string, value):
+		with lock_cmd_cache:
+			if (len(self.cache) > CONFIG.CMD_CACHE):
+				self.cache.pop(next(iter(self.cache)))
+		self.cache[string] = value
+	def get(self, string):
+		with lock_cmd_cache:
+			return self.cache.get(string)
+
+command_cache = Command_Cache()
+
 class Command():
 	def __init__(self, execName):
 		self.execName = execName
 		self.args     = []
-	def set(self, args):
+		self.cacheable = False
+	def set(self, args, cacheable=False):
 		self.args = args
+		self.cacheable = cacheable
 	def run(self):
 		strings = [self.execName] + [str(i) for i in self.args]
+		file_hashes = []
+		if (self.cacheable):
+			for i in self.args:
+					if isinstance(i, Path):
+						file_hashes += [hash_file(i)]
+
 		msg_exec.print(' '.join(strings))
-		result = subprocess.run(strings, capture_output=True, check=True, start_new_session=True)
-		tmp = result.stdout.decode('utf‑8')
-		if (tmp != ""):
+
+		if (self.cacheable):
+			tmp = command_cache.get(str(file_hashes+strings))
+			if (tmp):
+				return tmp
+
+		result = None
+		try:
+			result = subprocess.run(strings, capture_output=True, check=True, start_new_session=True)
+		except subprocess.CalledProcessError as e:
+			tmp = e.stdout.decode('utf‑8')
 			msg_stdout.print(tmp)
-		tmp = result.stderr.decode('utf‑8')
-		if (tmp != ""):
+			tmp = e.stderr.decode('utf‑8')
 			msg_stderr.print(tmp)
+			raise
+		if (self.cacheable):
+			command_cache.put(str(file_hashes+strings), result)
 		return result
 	def check_dependencies(self):
 		return ""
@@ -204,14 +245,14 @@ class Exiftool_orientation(Command):
 	def __init__(self):
 		super().__init__("exiftool")
 	def set(self, path:Path):
-		super().set(["-orientation", path])
+		super().set(["-orientation", path], cacheable=True)
 		return self
 
 class Ffmpeg(Command):
 	def __init__(self):
 		super().__init__(CONFIG.BIN_FFMPEG)
 
-	def set(self, ffmpeg_args):
+	def set(self, ffmpeg_args, cacheable=False):
 		args = []
 		if (self.execName in {"docker", "podman"}):
 			permissions = []
@@ -224,7 +265,7 @@ class Ffmpeg(Command):
 			args += [CONFIG.DOCKER_FFMPEG, "-stats"]
 
 		args += ffmpeg_args
-		super().set(args)
+		super().set(args, cacheable)
 
 class Ffmpeg_aomav1(Ffmpeg):
 	def set(self, source: Path, destination: Path, crf, max_bytes=None):
@@ -299,7 +340,7 @@ class Ffmpeg_psnr(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]psnr", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]psnr", "-f", "null", "-"], cacheable=True)
 		return self
 	def run(self):
 		result = super().run()
@@ -324,7 +365,7 @@ class Ffmpeg_ssim(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]ssim", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]ssim", "-f", "null", "-"], cacheable=True)
 		return self
 	def run(self):
 		result = super().run()
@@ -357,7 +398,7 @@ class Ffmpeg_random(Ffmpeg):
 
 class Ffmpeg_stats(Ffmpeg):
 	def set(self, path:Path):
-		super().set(["-hide_banner", "-i", path, "-c", "copy", "-f", "null", "-y", "/dev/null"])
+		super().set(["-hide_banner", "-i", path, "-c", "copy", "-f", "null", "-y", "/dev/null"], cacheable=True)
 		return self
 	def run(self):
 		result = super().run()
@@ -499,7 +540,7 @@ class Ffmpeg_vmaf(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]libvmaf", "-f", "null", "-"])
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]libvmaf", "-f", "null", "-"], cacheable=True)
 		self.stderr = ""
 		return self
 	def run(self):
