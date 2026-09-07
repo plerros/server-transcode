@@ -96,6 +96,10 @@ def read_binary_file(path: str) -> bytes:
 	with open(path, "rb") as f:
 		return f.read()
 
+def append_binary_file(path: str, data: bytes) -> None:
+	with open(path, "ab") as f:
+		f.write(data)
+
 def write_binary_file(path: str, data: bytes) -> None:
 	with open(path, "wb") as f:
 		f.write(data)
@@ -281,6 +285,9 @@ class Ffmpeg_aomav1(Ffmpeg):
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
 			ret +=  Ffmpeg_psnr().works_str()
+		if (not Ffmpeg_ssim().works()):
+			functional.set(self, False)
+			ret +=  Ffmpeg_ssim().works_str()
 		if (not Ffmpeg_vmaf().works()):
 			functional.set(self, False)
 			ret += Ffmpeg_vmaf().works_str()
@@ -605,6 +612,74 @@ class Optipng(Command):
 		super().set(["-o7", path])
 		return self
 
+# evaluate_image()
+# 	Too high quality: y=+inf
+# 	Too low quality:  y=-inf
+
+def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=False):
+	statistics = {}
+	statistics["psnr"]    = None
+	statistics["ssim_db"] = None
+	statistics["vmaf_db"] = None
+
+	# Filesize filter
+	# If we're not saving drive space, keep the original
+	in_bytes  = original.stat().st_size
+	out_bytes = op_destination.stat().st_size
+
+	# Frame match check
+	ffmpeg_stats = Ffmpeg_stats().set(original)
+	ffmpeg_stats.run()
+	in_frames = ffmpeg_stats.frames()
+	ffmpeg_stats = Ffmpeg_stats().set(op_destination)
+	ffmpeg_stats.run()
+	out_frames = ffmpeg_stats.frames()
+
+	# Handle impossible cases, where something has gone very wrong
+	if (out_frames > in_frames):
+		raise ValueError
+	elif ((out_frames < in_frames) and (out_bytes < int(in_bytes * CONFIG.COMPRESSION_RATIO_THRESHOLD))):
+		raise ValueError
+
+	# File size filter
+	if ((out_bytes / in_bytes > CONFIG.COMPRESSION_RATIO_THRESHOLD) or (out_frames < in_frames)):
+		return (float("+inf"), statistics)
+
+	# PSNR filter
+	# Helps the code better pick between YUV values 444, 422, 420
+	ffmpeg_psnr = Ffmpeg_psnr().set(op_source, op_destination)
+	ffmpeg_psnr.run()
+	psnr        = ffmpeg_psnr.psnr()
+	psnr_target = CONFIG.PSNR.get_target(hq)
+	psnr_min    = CONFIG.PSNR.get_min(hq)
+	statistics["psnr"] = round(psnr, 2)
+	if (psnr < psnr_min):
+		return (float("-inf"), statistics)
+
+	# SSIM filter
+	ffmpeg_ssim = Ffmpeg_ssim().set(op_source, op_destination)
+	ffmpeg_ssim.run()
+	ssim_db        = ffmpeg_ssim.ssim_db()
+	ssim_db_target = CONFIG.SSIM_DB.get_target(hq)
+	ssim_db_min    = CONFIG.SSIM_DB.get_min(hq)
+	statistics["ssim_db"] = round(ssim_db, 2)
+	if (ssim_db < ssim_db_min):
+		return (float("-inf"), statistics)
+
+	# VMAF values
+	ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
+	ffmpeg_vmaf.run()
+	vmaf_db        = ffmpeg_vmaf.vmaf_db()
+	vmaf_db_target = CONFIG.VMAF_DB.get_target(hq)
+	vmaf_db_min    = CONFIG.VMAF_DB.get_min(hq)
+	statistics["vmaf_db"] = round(vmaf_db, 2)
+	if (vmaf_db < vmaf_db_min):
+		return (float("-inf"), statistics)
+
+	#return (psnr - psnr_target, statistics)
+	#return (ssim_db - ssim_db_target, statistics)
+	return (vmaf_db - vmaf_db_min, statistics)
+
 class Cache:
 	def __init__(self, x, parameters, outBytes, y, statistics):
 		self.x         = x
@@ -619,7 +694,7 @@ class Cache:
 		ret +=    "outBytes: "   + str(self.outBytes)
 		ret +=    "y: "          + str(self.y)
 		for i in self.statistics:
-			ret += i[0] + " " + str(i[1])
+			ret += str(i) + " " + str(self.statistics[i])
 		ret += "}"
 		return ret
 
@@ -656,24 +731,26 @@ class Operation():
 				return False
 
 		ret = True
-		statistics =  [("inType", self.path.suffix)]
-		statistics += [("inSize", self.path.stat().st_size)]
+		statistics = {}
+		statistics["inType"] = self.path.suffix
+		statistics["inSize"] = self.path.stat().st_size
 		try:
 			tmp = self.run_operation()
 			if tmp is None:
 				ret = False
 			else:
-				statistics += [("outSize", self.op_destination.stat().st_size)]
-				statistics += tmp
-		except subprocess.CalledProcessError:
+				statistics["outSize"] = self.op_destination.stat().st_size
+				statistics |= tmp
+		except subprocess.CalledProcessError as e:
+			msg_error.print(e)
 			ret = False
 
 		if (ret and self.statsFile):
 			csv_header = []
 			csv_line   = []
 			for i in statistics:
-				csv_header += [i[0]]
-				csv_line   += [i[1]]
+				csv_header += [i]
+				csv_line   += [statistics[i]]
 			append_line(self.statsFile, csv=csv_line)
 
 		os.makedirs(self.outdir, exist_ok=True)
@@ -708,14 +785,10 @@ class Brentq_scalar(Operation):
 			msg_info.print(root_scalar(self.cached_f, bracket=[self.lower_bound, self.upper_bound], method='brentq', xtol=0.49))
 		except ValueError as e:
 			msg_info.print(e)
-			return False
-		return True
 	def run_operation(self):
-		self.set_variables()
 		if not self.preRun():
 			return None
-		if not self.brentq():
-			return None
+		self.brentq()
 
 		best = None
 		for i in self.cache:
@@ -731,11 +804,15 @@ class Brentq_scalar(Operation):
 			return None
 
 		write_binary_file(self.op_destination, best.outBytes)
+
+		statistics = {}
+		statistics["y"] = best.y
+		statistics |= best.statistics
 		csv_line = []
-		for i in best.statistics:
-			csv_line += [" "+str(i[1])]
-		append_line(self.op_info, strings=["best:"]+csv_line)
-		return [("y", best.y)] + best.statistics
+		for i in statistics:
+			csv_line += [statistics[i]]
+		append_line(self.op_info, strings=["best:"], csv=csv_line)
+		return statistics
 
 class To_avif(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
@@ -744,6 +821,8 @@ class To_avif(Brentq_scalar):
 		self.hq = hq
 		self.psnr_min    = None
 		self.psnr_target = None
+		self.ssim_min    = None
+		self.ssim_target = None
 		self.encode_yuv   = 444
 		self.stat_rotated = False
 	def outSuffix(self, path):
@@ -752,13 +831,6 @@ class To_avif(Brentq_scalar):
 		return path.with_suffix(".avif.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".avif.log")
-	def set_variables(self):
-		psnr = 45.0
-		if (self.hq):
-			psnr = 58.0
-		self.psnr_min    = psnr - 1.0
-		self.psnr_target = psnr
-
 	def preRun(self):
 		# rotation
 		result = Exiftool_orientation().set(self.op_source).run()
@@ -769,7 +841,7 @@ class To_avif(Brentq_scalar):
 
 			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, rotated)
 			ffmpeg_psnr.run()
-			if (ffmpeg_psnr.psnr() > self.psnr_target + 5):
+			if (ffmpeg_psnr.psnr() > CONFIG.PSNR.get_target(self.hq) + 5):
 				self.op_source = rotated
 				self.stat_rotated = True
 		return True
@@ -789,9 +861,6 @@ class To_avif(Brentq_scalar):
 	def cache_index(self, q: int):
 		return Cache(q, (self.encode_yuv), None, None, [])
 	def f(self, q: int):
-		store_bytes = True
-		append_line(self.op_info, strings=["doing: ", q])
-
 		# cicp CP/TC/MC
 		# https://github.com/AOMediaCodec/libavif/wiki/CICP
 		#
@@ -809,6 +878,11 @@ class To_avif(Brentq_scalar):
 		#     MC=0 means no loss when converting between RGB and YUV, but AV1 encoding suffers in efficiency
 
 		result = None
+		statistics = {}
+		statistics["rotated"] = self.stat_rotated
+		statistics["yuv"]     = self.encode_yuv
+		statistics["q"]       = q
+
 		try:
 			result = Avifenc().set(self.op_source, self.op_destination, self.encode_yuv, q).run()
 		except subprocess.CalledProcessError as e:
@@ -821,45 +895,29 @@ class To_avif(Brentq_scalar):
 			else:
 				raise
 
-		append_line(self.op_info, strings=["done"])
-		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
+		append_binary_file(self.op_log, b''+result.stdout+result.stderr)
 
-		in_bytes  = self.path.stat().st_size
-		out_bytes = self.op_destination.stat().st_size
-		if (out_bytes > in_bytes):
-			append_line(self.op_info, strings=["bigger than source"])
-			store_bytes = False
+		y,evaluation_stats = evaluate_image(self.path, self.op_source, self.op_destination, self.hq)
+		statistics |= evaluation_stats
+		csv_line = []
+		for i in statistics:
+			csv_line += [statistics[i]]
+		append_line(self.op_info, csv=csv_line)
 
-		# compare against original
-		psnr = None
-		if (out_bytes > in_bytes):
-			psnr = float("+inf")
-		else:
-			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
-			ffmpeg_psnr.run()
-			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, strings=["psnr ", psnr])
-		if (psnr < self.psnr_min):
-			store_bytes = False
-
-		y = psnr - self.psnr_target
 		# Store results to cache
 		data = b''
-		if (store_bytes):
+		if (math.isfinite(y)):
 			data = read_binary_file(self.op_destination)
 
 		self.op_destination.unlink()
-		return Cache(q, (self.encode_yuv), data, y, [("rotated", self.stat_rotated), ("yuv", self.encode_yuv), ("q", q), ("psnr", psnr)])
+		return Cache(q, (self.encode_yuv), data, y, statistics)
 
 class To_vaav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
 		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_vaav1.csv", 1, 255)
 
 		self.hq = hq
-		self.psnr_min    = None
-		self.psnr_target = None
-		self.vmaf_min    = None
-		self.vmaf_target = None
+		self.stat_cropped = False
 
 	def outSuffix(self, path):
 		return path.with_suffix(".vaav1.mkv")
@@ -867,34 +925,23 @@ class To_vaav1(Brentq_scalar):
 		return path.with_suffix(".vaav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
-	def set_variables(self):
-		psnr = 30.0
-		vmaf = 95.0
-		if (self.hq):
-			psnr = 43.0
-			vmaf = 98.0
-
-		self.psnr_min    = psnr - 1.0
-		self.psnr_target = psnr
-		self.vmaf_min    = vmaf - 1.0
-		self.vmaf_target = vmaf
-		self.stat_cropped = False
 	def preRun(self):
 		# test for gpu support
 		ffmpeg_stats = Ffmpeg_stats().set(self.path)
 		ffmpeg_stats.run()
 		resolution = ffmpeg_stats.resolution()
 
-		if (resolution[0] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
-			return False
-		if (resolution[1] % CONFIG.VAAV1_RESOLUTION_MODULO > CONFIG.VAAV1_CROP_PIXELS):
-			return False
-
+		resmod = []
+		resmod += [resolution[0] % CONFIG.VAAV1_RESMOD_HORIZONTAL]
+		resmod += [resolution[1] % CONFIG.VAAV1_RESMOD_VERTICAL]
 		op_resolution = []
-		for i in resolution:
-			tmp = i - (i % CONFIG.VAAV1_RESOLUTION_MODULO)
+
+		for i in [0,1]:
+			if (resmod[i] > CONFIG.VAAV1_CROP_PIXELS):
+				return False
+			tmp = resolution[i] - (resmod[i])
 			op_resolution += [tmp]
-			if (tmp != i):
+			if (tmp != resolution[i]):
 				self.stat_cropped = True
 
 		if (self.stat_cropped):
@@ -906,164 +953,64 @@ class To_vaav1(Brentq_scalar):
 	def cache_index(self, q:int):
 		return Cache(q, None, None, None, [])
 	def f(self, q: int):
-		store_bytes = True
+		statistics = {}
+		statistics["cropped"] = self.stat_cropped
+		statistics["q"]       = q
 
-		append_line(self.op_info, strings=["doing: ", q])
-		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q, max_bytes=self.path.stat().st_size).run()
-		append_line(self.op_info, strings=["done"])
-		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
+		result = Ffmpeg_vaav1().set(self.op_source, self.op_destination, q, max_bytes=int(self.path.stat().st_size * CONFIG.COMPRESSION_RATIO_THRESHOLD)).run()
+		append_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
-		in_bytes  = self.path.stat().st_size
-		out_bytes = self.op_destination.stat().st_size
-
-		ffmpeg_stats = Ffmpeg_stats().set(self.path)
-		ffmpeg_stats.run()
-		in_frames = ffmpeg_stats.frames()
-		ffmpeg_stats = Ffmpeg_stats().set(self.op_destination)
-		ffmpeg_stats.run()
-		out_frames = ffmpeg_stats.frames()
-
-		if (out_bytes > in_bytes):
-			append_line(self.op_info, strings=["bigger than source"])
-			store_bytes = False
-		if (out_frames != in_frames):
-			append_line(self.op_info, strings=["frame mismatch: ", out_frames, " ", in_frames])
-			store_bytes = False
-
-		if (out_frames > in_frames):
-			raise ValueError
-		elif ((out_frames < in_frames) and (out_bytes <= in_bytes)):
-			raise ValueError
-
-		psnr = None
-		if ((out_bytes > in_bytes) or (out_frames != in_frames)):
-			# If out frames are less, assume -fs was triggered
-			psnr = float("+inf")
-		else:
-			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
-			ffmpeg_psnr.run()
-			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, strings=["psnr ", psnr])
-		if (psnr < self.psnr_min):
-			store_bytes = False
-
-		vmaf = None
-		if ((out_bytes > in_bytes) or (out_frames < in_frames) or (psnr == float("+inf"))):
-			vmaf = float("+inf")
-		elif (psnr < self.psnr_min):
-			vmaf = float("-inf")
-		else:
-			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
-			ffmpeg_vmaf.run()
-			vmaf = ffmpeg_vmaf.vmaf()
-			append_line(self.op_info, strings=["vmaf ", vmaf])
-		if (vmaf < self.vmaf_min):
-			store_bytes = False
-
-		y = vmaf - self.vmaf_target
+		y,evaluation_stats = evaluate_image(self.path, self.op_source, self.op_destination, self.hq)
+		statistics |= evaluation_stats
+		csv_line = []
+		for i in statistics:
+			csv_line += [statistics[i]]
+		append_line(self.op_info, csv=csv_line)
 
 		# Store results to cache
 		data = b''
-		if (store_bytes):
+		if (math.isfinite(y)):
 			data = read_binary_file(self.op_destination)
 
 		self.op_destination.unlink()
-		return Cache(q, None, data, y, [("cropped", self.stat_cropped), ("q", q), ("psnr", psnr), ("vmaf", vmaf)])
+		return Cache(q, None, data, y, statistics)
 
 class To_aomav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
 		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_aomav1.csv", 1, 63)
 
 		self.hq = hq
-		self.psnr_min    = None
-		self.psnr_target = None
-		self.vmaf_min    = None
-		self.vmaf_target = None
 	def outSuffix(self, path):
 		return path.with_suffix(".aomav1.mkv")
 	def infoSuffix(self, path):
 		return path.with_suffix(".aomav1.txt")
 	def logSuffix(self, path):
 		return path.with_suffix(".aomav1.log")
-	def set_variables(self):
-		psnr = 30.0
-		vmaf = 95.0
-		if (self.hq):
-			psnr = 43.0
-			vmaf = 98.0
-
-		self.psnr_min    = psnr - 1.0
-		self.psnr_target = psnr
-		self.vmaf_min    = vmaf - 1.0
-		self.vmaf_target = vmaf
 	def cache_index(self, crf: int):
 		return Cache(crf, None, None, None, [])
 	def f(self, crf: int):
-		store_bytes = True
+		statistics = {}
+		statistics["crf"] = crf
 
-		append_line(self.op_info, strings=["doing: ", crf])
-		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf, max_bytes=self.path.stat().st_size).run()
-		append_line(self.op_info, strings=["done"])
-		write_binary_file(self.op_log, b''+result.stdout+result.stderr)
+		result = Ffmpeg_aomav1().set(self.op_source, self.op_destination, crf, max_bytes=int(self.path.stat().st_size * CONFIG.COMPRESSION_RATIO_THRESHOLD)).run()
+		append_binary_file(self.op_log, b''+result.stdout+result.stderr)
 		# detect error
 
-		in_bytes  = self.path.stat().st_size
-		out_bytes = self.op_destination.stat().st_size
-
-		ffmpeg_stats = Ffmpeg_stats().set(self.path)
-		ffmpeg_stats.run()
-		in_frames = ffmpeg_stats.frames()
-		ffmpeg_stats = Ffmpeg_stats().set(self.op_destination)
-		ffmpeg_stats.run()
-		out_frames = ffmpeg_stats.frames()
-
-		if (out_bytes > in_bytes):
-			append_line(self.op_info, strings=["bigger than source"])
-			store_bytes = False
-		if (out_frames != in_frames):
-			append_line(self.op_info, strings=["frame mismatch: ", out_frames, " ", in_frames])
-			store_bytes = False
-
-		if (out_frames > in_frames):
-			raise ValueError
-		elif ((out_frames < in_frames) and (out_bytes <= in_bytes)):
-			raise ValueError
-
-		psnr = None
-		if ((out_bytes > in_bytes) or (out_frames != in_frames)):
-			# If out frames are less, assume -fs was triggered
-			psnr = float("+inf")
-		else:
-			ffmpeg_psnr = Ffmpeg_psnr().set(self.op_source, self.op_destination)
-			ffmpeg_psnr.run()
-			psnr = ffmpeg_psnr.psnr()
-			append_line(self.op_info, strings=["psnr ", psnr])
-		if (psnr < self.psnr_min):
-			store_bytes = False
-
-		vmaf = None
-		if ((out_bytes > in_bytes) or (out_frames < in_frames) or (psnr == float("+inf"))):
-			vmaf = float("+inf")
-		elif (psnr < self.psnr_min):
-			vmaf = float("-inf")
-		else:
-			ffmpeg_vmaf = Ffmpeg_vmaf().set(self.op_source, self.op_destination)
-			ffmpeg_vmaf.run()
-			vmaf = ffmpeg_vmaf.vmaf()
-			append_line(self.op_info, strings=["vmaf ", vmaf])
-		if (vmaf < self.vmaf_min):
-			store_bytes = False
-
-		y = vmaf - self.vmaf_target
+		y,evaluation_stats = evaluate_image(self.path, self.op_source, self.op_destination, self.hq)
+		statistics |= evaluation_stats
+		csv_line = []
+		for i in statistics:
+			csv_line += [statistics[i]]
+		append_line(self.op_info, csv=csv_line)
 
 		# Store results to cache
 		data = b''
-		if (store_bytes):
+		if (math.isfinite(y)):
 			data = read_binary_file(self.op_destination)
 
 		self.op_destination.unlink()
-		return Cache(crf, None, data, y, [("crf", crf), ("psnr", psnr), ("vmaf", vmaf)])
+		return Cache(crf, None, data, y, statistics)
 
 class Copy(Operation):
 	def __init__(self, path: Path, outdir: Path):
