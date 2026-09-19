@@ -1,7 +1,9 @@
 import argparse
 import contextlib
+import csv
 import hashlib
 import math
+import mpmath
 import multiprocessing
 import os
 from   pathlib import Path
@@ -114,6 +116,24 @@ def hash_file(path, algorithm="sha256", chunk_size=1024 * 1024):
 def container_permit(file: Path):
 	return ["-v", str(file.parent)+':'+str(file.parent)+":z"]
 
+def pmean(floats, power):
+	mpmath.mp.dps = 30
+
+	# Type conversion	
+	power  = mpmath.mpf(power)
+	values = [mpmath.mpf(x) for x in floats]
+	total  = mpmath.mpf(len(values))
+
+	# Handle geometric mean
+	if power == 0:
+		product = mpmath.mpf(1)
+		for i in values:
+			product *= mpmath.power(i, 1 / total)
+		return product
+
+	sum = mpmath.fsum(mpmath.power(i, power) for i in values)
+	return float(mpmath.power(sum / total, 1 / power))
+
 # Globally accessible mapping to denote if an object is fully functional
 class Functional():
 	def __init__(self):
@@ -150,6 +170,36 @@ class Command_Cache():
 
 command_cache = Command_Cache()
 
+def stack_info(limit=5):
+	# Start at the caller of this function
+	f = sys._getframe(1)
+	out = []
+
+	while f and len(out) < limit:
+		code = f.f_code
+		func = code.co_name
+
+		cls = None
+		for name in ("self", "cls"):
+			if name in f.f_locals:
+				obj = f.f_locals[name]
+				cls = obj if isinstance(obj, type) else type(obj)
+				break
+
+		qualname = getattr(code, "co_qualname", func)  # Python 3.11+
+
+		out.append({
+			"class": cls,
+			"function": func,
+			"qualname": qualname,
+			"file": code.co_filename,
+            "lineno": f.f_lineno,
+		})
+
+		f = f.f_back
+
+	return out
+
 class Command():
 	def __init__(self, execName):
 		self.execName = execName
@@ -159,14 +209,18 @@ class Command():
 		self.args = args
 		self.cacheable = cacheable
 	def run(self):
-		strings = [self.execName] + [str(i) for i in self.args]
+		strings = [self.execName]
+		for i in self.args:
+			if isinstance(i, list):
+				strings += [''.join([str(j) for j in i])]
+			else:
+				strings += [str(i)]
+
 		file_hashes = []
 		if (self.cacheable):
-			for i in self.args:
-					if isinstance(i, Path):
-						file_hashes += [hash_file(i)]
-
-		msg_exec.print(' '.join(strings))
+			for i in list(flatten(self.args)):
+				if isinstance(i, Path):
+					file_hashes += [hash_file(i)]
 
 		if (self.cacheable):
 			tmp = command_cache.get(str(file_hashes+strings))
@@ -260,7 +314,8 @@ class Ffmpeg(Command):
 		args = []
 		if (self.execName in {"docker", "podman"}):
 			permissions = []
-			for i in ffmpeg_args:
+			exit_flag = False
+			for i in list(flatten(ffmpeg_args)):
 				if (isinstance(i, (pathlib.PurePath))):
 					permissions += container_permit(i)
 			args += ["run", "--rm"]
@@ -347,21 +402,44 @@ class Ffmpeg_psnr(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]psnr", "-f", "null", "-"], cacheable=True)
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]psnr='stats_file=-'", "-f", "null", "-"], cacheable=True)
 		return self
 	def run(self):
 		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
+		self.stdout = result.stdout.decode('utf-8')
 		return result
 	def psnr(self):
-		tmp_re    = grep(r'PSNR.*'        , self.stderr)
-		tmp_re    = grep(r'min:.* max'    , tmp_re)
-		finite    = grep(r'[0-9]*\.[0-9]*', tmp_re)
-		infinite  = grep(r'inf', tmp_re)
-		if (finite == ""):
-			return float(infinite)
+		LINE_RE = re.compile(
+			r"n:\s*(?P<n>\d+)\s+"
+			r"mse_avg:\s*(?P<mse_avg>-?\d+(?:\.\d+)?)\s+"
+			r"mse_y:\s*(?P<mse_y>-?\d+(?:\.\d+)?)\s+"
+			r"mse_u:\s*(?P<mse_u>-?\d+(?:\.\d+)?)\s+"
+			r"mse_v:\s*(?P<mse_v>-?\d+(?:\.\d+)?)\s+"
+			r"psnr_avg:\s*(?P<psnr_avg>-?\d+(?:\.\d+)?)\s+"
+			r"psnr_y:\s*(?P<psnr_y>-?\d+(?:\.\d+)?)\s+"
+			r"psnr_u:\s*(?P<psnr_u>-?\d+(?:\.\d+)?)\s+"
+			r"psnr_v:\s*(?P<psnr_v>-?\d+(?:\.\d+)?)\s*"
+		)
 
-		return float(finite)
+		def parse_line(line: str) -> dict:
+			m = LINE_RE.fullmatch(line.strip())
+			if not m:
+				raise ValueError(f"Could not parse line: {line!r}")
+
+			d = m.groupdict()
+			d["n"] = int(d["n"])
+			for key in ("mse_avg", "mse_y", "mse_u", "mse_v", "psnr_avg", "psnr_y", "psnr_u", "psnr_v"):
+				d[key] = float(d[key])
+			return d
+
+		data = []
+		for line in self.stdout.splitlines():
+			parsed = parse_line(line)
+			data += [parsed["psnr_avg"]]
+
+		
+		return pmean(data, CONFIG.PSNR.power_mean)
 
 class Ffmpeg_ssim(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
@@ -372,26 +450,41 @@ class Ffmpeg_ssim(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]ssim", "-f", "null", "-"], cacheable=True)
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]ssim='stats_file=-'", "-f", "null", "-"], cacheable=True)
 		return self
 	def run(self):
 		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
+		self.stdout = result.stdout.decode('utf-8')
 		return result
 	def ssim(self):
-		tmp_re = grep(r'SSIM.*', self.stderr)
+		LINE_RE = re.compile(
+			r"n:\s*(?P<n>\d+)\s+"
+			r"Y:\s*(?P<y>-?\d+(?:\.\d+)?)\s+"
+			r"U:\s*(?P<u>-?\d+(?:\.\d+)?)\s+"
+			r"V:\s*(?P<v>-?\d+(?:\.\d+)?)\s+"
+			r"All:\s*(?P<all>-?\d+(?:\.\d+)?)\s*"
+			r"\((?P<db>-?\d+(?:\.\d+)?)\)"
+		)
 
-		minimum = float("1.0")
-		for i in ['R', 'G', 'B', 'Y', 'U', 'V']:
-			component = grep(i+r':[0-9]\.[0-9]*', tmp_re)
-			value     = grep(r'[0-9]\.[0-9]*',    tmp_re)
+		def parse_line(line: str) -> dict:
+			m = LINE_RE.fullmatch(line.strip())
+			if not m:
+				raise ValueError(f"Could not parse line: {line!r}")
 
-			if (value == ""):
-				continue
-			if (float(value) < minimum):
-				minimum = float(value)
+			d = m.groupdict()
+			d["n"] = int(d["n"])
+			for key in ("y", "u", "v", "all", "db"):
+				d[key] = float(d[key])
+			return d
 
-		return minimum
+		data = []
+		for line in self.stdout.splitlines():
+			parsed = parse_line(line)
+			data += [parsed["all"]]
+
+		return pmean(data, CONFIG.SSIM_DB.power_mean)
+
 	def ssim_db(self):
 		tmp = 1.0 - self.ssim()
 		if (tmp == 0.0):
@@ -547,17 +640,45 @@ class Ffmpeg_vmaf(Ffmpeg):
 		ffmpeg_stats.run()
 		transcoded_timebase = ffmpeg_stats.timebase()
 		common_timebase = str(math.lcm(original_timebase, transcoded_timebase))
-		super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]libvmaf", "-f", "null", "-"], cacheable=True)
+
+		#super().set(["-i", transcoded, "-i", original, "-filter_complex", "[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];[main][ref]libvmaf", "-f", "null", "-"])
+		self.tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		self.csv = Path(self.tempdir.name) / "vmaf.csv"
+
+		filter_complex = [
+			# Adjust timebase
+			"[0:v]settb="+common_timebase+",setpts=PTS-STARTPTS[main];[1:v]settb="+common_timebase+",setpts=PTS-STARTPTS[ref];",
+			"[main][ref]libvmaf=",
+			# Enable all statistics
+			"feature=name=adm|name=cambi|name=float_ms_ssim|name=float_ssim|name=motion|name=psnr|name=psnr_hvs|name=vif",
+			":log_fmt=csv:log_path='",
+			self.csv,
+			# Use VMAF_neg
+			"':model=version=vmaf_v0.6.1neg"
+		]
+		super().set(["-i", transcoded, "-i", original, "-filter_complex", filter_complex, "-f", "null", "-"])
+
 		self.stderr = ""
 		return self
 	def run(self):
 		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
 		return result
+	def psnr_hvs_cb(self):
+		data = []
+		with open(self.csv, newline="") as f:
+			reader = csv.DictReader(f)
+			for row in reader:
+				data += [float(row["psnr_hvs_cb"])]
+		return pmean(data, CONFIG.PSNR_HVS_CB.power_mean)
 	def vmaf(self):
-		tmp_re = grep(r'VMAF.*'        , self.stderr)
-		tmp_re = grep(r'[0-9]*\.[0-9]*', tmp_re)
-		return float(tmp_re)
+		data = []
+		with open(self.csv, newline="") as f:
+			reader = csv.DictReader(f)
+			for row in reader:
+				data += [float(row["vmaf"])]
+		return pmean(data, CONFIG.VMAF_DB.power_mean)
+		
 	def vmaf_db(self):
 		tmp = 1.0 - (self.vmaf() / 100.0)
 		if (tmp == 0.0):
@@ -620,6 +741,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	statistics = {}
 	statistics["psnr"]    = None
 	statistics["ssim_db"] = None
+	statistics["psnr_hvs_cb"] = None
 	statistics["vmaf_db"] = None
 
 	# Filesize filter
@@ -645,40 +767,41 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	if ((out_bytes / in_bytes > CONFIG.COMPRESSION_RATIO_THRESHOLD) or (out_frames < in_frames)):
 		return (float("+inf"), statistics)
 
-	# PSNR filter
-	# Helps the code better pick between YUV values 444, 422, 420
+	# Metrics
 	ffmpeg_psnr = Ffmpeg_psnr().set(op_source, op_destination)
 	ffmpeg_psnr.run()
-	psnr        = ffmpeg_psnr.psnr()
-	psnr_target = CONFIG.PSNR.get_target(hq)
-	psnr_min    = CONFIG.PSNR.get_min(hq)
-	statistics["psnr"] = round(psnr, 2)
-	if (psnr < psnr_min):
+	psnr = [ffmpeg_psnr.psnr(), CONFIG.PSNR]
+	statistics["psnr"] = round(psnr[0], 2)
+	if (psnr[0] < psnr[1].get_min(hq)):
 		return (float("-inf"), statistics)
 
-	# SSIM filter
 	ffmpeg_ssim = Ffmpeg_ssim().set(op_source, op_destination)
 	ffmpeg_ssim.run()
-	ssim_db        = ffmpeg_ssim.ssim_db()
-	ssim_db_target = CONFIG.SSIM_DB.get_target(hq)
-	ssim_db_min    = CONFIG.SSIM_DB.get_min(hq)
-	statistics["ssim_db"] = round(ssim_db, 2)
-	if (ssim_db < ssim_db_min):
+	ssim_db = [ffmpeg_ssim.ssim_db(), CONFIG.SSIM_DB]
+	statistics["ssim_db"] = round(ssim_db[0], 2)
+	if (ssim_db[0] < ssim_db[1].get_min(hq)):
 		return (float("-inf"), statistics)
 
-	# VMAF values
 	ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
 	ffmpeg_vmaf.run()
-	vmaf_db        = ffmpeg_vmaf.vmaf_db()
-	vmaf_db_target = CONFIG.VMAF_DB.get_target(hq)
-	vmaf_db_min    = CONFIG.VMAF_DB.get_min(hq)
-	statistics["vmaf_db"] = round(vmaf_db, 2)
-	if (vmaf_db < vmaf_db_min):
+	psnr_hvs_cb = [ffmpeg_vmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
+	vmaf_db     = [ffmpeg_vmaf.vmaf_db(),     CONFIG.VMAF_DB]
+	statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
+	if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
+		return (float("-inf"), statistics)
+	statistics["vmaf_db"] = round(vmaf_db[0], 2)
+	if (vmaf_db[0] < vmaf_db[1].get_min(hq)):
 		return (float("-inf"), statistics)
 
-	#return (psnr - psnr_target, statistics)
-	#return (ssim_db - ssim_db_target, statistics)
-	return (vmaf_db - vmaf_db_min, statistics)
+	y = []
+	#for value, metric in [psnr, ssim_db, psnr_hvs_cb, vmaf_db]:
+	for value, metric in [vmaf_db]:
+		if (metric.contribution == 0):
+			continue
+		final = (value - metric.get_target(hq)) * metric.contribution
+		y += [final]
+
+	return (sum(y) / len(y), statistics)
 
 class Cache:
 	def __init__(self, x, parameters, outBytes, y, statistics):
