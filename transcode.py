@@ -472,10 +472,10 @@ class Ffmpeg_psnr(Ffmpeg):
 			r"mse_y:\s*(?P<mse_y>-?\d+(?:\.\d+)?)\s+"
 			r"mse_u:\s*(?P<mse_u>-?\d+(?:\.\d+)?)\s+"
 			r"mse_v:\s*(?P<mse_v>-?\d+(?:\.\d+)?)\s+"
-			r"psnr_avg:\s*(?P<psnr_avg>-?\d+(?:\.\d+)?)\s+"
-			r"psnr_y:\s*(?P<psnr_y>-?\d+(?:\.\d+)?)\s+"
-			r"psnr_u:\s*(?P<psnr_u>-?\d+(?:\.\d+)?)\s+"
-			r"psnr_v:\s*(?P<psnr_v>-?\d+(?:\.\d+)?)\s*"
+			r"psnr_avg:\s*(?P<psnr_avg>(?:inf|-?\d+(?:\.\d+)?))\s+"
+			r"psnr_y:\s*(?P<psnr_y>(?:inf|-?\d+(?:\.\d+)?))\s+"
+			r"psnr_u:\s*(?P<psnr_u>(?:inf|-?\d+(?:\.\d+)?))\s+"
+			r"psnr_v:\s*(?P<psnr_v>(?:inf|-?\d+(?:\.\d+)?))\s*"
 		)
 
 		def parse_line(line: str) -> dict:
@@ -520,7 +520,7 @@ class Ffmpeg_ssim(Ffmpeg):
 			r"U:\s*(?P<u>-?\d+(?:\.\d+)?)\s+"
 			r"V:\s*(?P<v>-?\d+(?:\.\d+)?)\s+"
 			r"All:\s*(?P<all>-?\d+(?:\.\d+)?)\s*"
-			r"\((?P<db>-?\d+(?:\.\d+)?)\)"
+			r"\((?P<db>(?:inf|-?\d+(?:\.\d+)?))\)"
 		)
 
 		def parse_line(line: str) -> dict:
