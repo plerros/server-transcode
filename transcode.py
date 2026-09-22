@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 
 from config import CONFIG
 
@@ -36,14 +37,18 @@ lock_media  = multiprocessing.Lock()
 
 def Bold(string: str):
 	return ("\033[1m"  + string + "\033[0m")
-def Cyan(string: str):
+def LightCyan(string: str):
 	return ("\033[96m" + string + "\033[0m")
-def Green(string: str):
+def LightGreen(string: str):
 	return ("\033[92m" + string + "\033[0m")
-def Red(string: str):
+def LightMagenta(string: str):
+	return ("\033[95m" + string + "\033[0m")
+def LightRed(string: str):
 	return ("\033[91m" + string + "\033[0m")
-def Yellow(string: str):
+def LightYellow(string: str):
 	return ("\033[93m" + string + "\033[0m")
+def Green(string: str):
+	return ("\033[32m" + string + "\033[0m")
 
 class msg:
 	def __init__(self, indicator="", effects=[]):
@@ -54,28 +59,70 @@ class msg:
 			string = i(string)
 		return string
 	def print(self, string):
-		self.string(string, print_out=True)
-	def string(self, string, print_out=False):
-		indicator = self.apply_effects(self.indicator)
-		indicator_length = len(self.indicator)
-		string = str(string)
+		indicator2 = ""
+		#if (stack):
+		qualnames = []
+		for i in stack_info(limit=5):
+			qualnames += [str(i["qualname"])]
 
-		indicator2 = (indicator_length) * ' '
-		ret = ""
-		for i in string.splitlines():
-			ret += indicator + " " + i + "\n"
-			indicator = indicator2
+		# Skip from start
+		for i in ["msg.print", "Command.run", "append_line"]:
+			try:
+				qualnames = qualnames[qualnames.index(i)+1:]
+			except:
+				pass
+
+		# Skip from end		
+		for i in ["BaseProcess.run", "<module>"]:
+			try:
+				qualnames = qualnames[:qualnames.index(i)]
+			except:
+				pass
+		# Skip system
+		qualnames = qualnames[:next((i for i, x in enumerate(qualnames) if x.startswith("_")), -1)]
+
+		qualnames.reverse()
+		indicator2 = '>'.join(qualnames)
+
+		self.string(string, print_out=True, indicator2=indicator2)
+	def string(self, string, print_out=False, indicator2=""):
+		string = str(string)
+		indicator = "[" + self.indicator + "]"
+		if (len(indicator2) > 0):
+			indicator  = "[" + self.indicator + "|"
+			indicator2 = indicator2 + "]"
+	
+		lines  = string.splitlines()
+
+		ret = self.apply_effects(indicator + indicator2)
+		if (len(lines) != 1):
+			ret += "\n"
+
+		spaces_now = ' '
+		spaces = len(indicator) * ' '
+
+		for i in lines:
+			ret += spaces_now + i + "\n"
+			spaces_now = spaces
 		if (print_out):
 			with lock_stdout:
 				print(ret, end='', flush=True)
 		return (ret)
 
-msg_error  = msg("[error ]", [Bold, Red])
-msg_exec   = msg("[ exec ]", [Bold, Green])
-msg_info   = msg("[ info ]", [Bold, Yellow])
-msg_status = msg("[status]")
-msg_stdout = msg("[stdout]", [Bold])
-msg_stderr = msg("[stderr]", [Bold])
+msg_cached = msg("cached", [Bold, Green])
+msg_error  = msg("error ", [Bold, LightRed])
+msg_exec   = msg(" exec ", [Bold, LightGreen])
+msg_info   = msg(" info ", [Bold, LightYellow])
+msg_status = msg("status")
+msg_stdout = msg("stdout", [Bold])
+msg_stderr = msg("stderr", [Bold])
+
+def flatten(arr):
+	for item in arr:
+		if isinstance(item, (list, tuple)):
+			yield from flatten(item)
+		else:
+			yield item
 
 def grep(pattern: re.Pattern, string: str, idx=0):
 	result = re.findall(pattern, string)
@@ -227,18 +274,27 @@ class Command():
 			if (tmp):
 				return tmp
 
+		msg_exec.print('')
 		result = None
 		try:
 			result = subprocess.run(strings, capture_output=True, check=True, start_new_session=True)
+			if (result.returncode):
+				msg_exec.print(' '.join(strings))
+				msg_stdout.print(result.stdout.decode('utf-8'))
+				msg_stderr.print(result.stderr.decode('utf-8'))
+			stdout, stderr = (result.stdout, result.stderr)
 		except subprocess.CalledProcessError as e:
-			tmp = e.stdout.decode('utf‑8')
-			msg_stdout.print(tmp)
-			tmp = e.stderr.decode('utf‑8')
-			msg_stderr.print(tmp)
+			msg_exec.print(' '.join(strings))
+			msg_stdout.print(e.stdout.decode('utf-8'))
+			msg_stderr.print(e.stderr.decode('utf-8'))
 			raise
+
 		if (self.cacheable):
 			command_cache.put(str(file_hashes+strings), result)
 		return result
+	def print_std(stdout, stderr):
+		msg_stdout.print(stdout.decode('utf-8'))
+		msg_stderr.print(stderr.decode('utf-8'))
 	def check_dependencies(self):
 		return ""
 	def check_exec_exists(self):
@@ -978,7 +1034,7 @@ class To_avif(Brentq_scalar):
 		failures = 0
 		for i in ["444", "422", "420"]:
 			self.encode_yuv = i
-			append_line(self.op_info, strings=["\n", "YUV ", i])
+			append_line(self.op_info, strings=["YUV ", i])
 
 			if (not super().brentq()):
 				failures += 1
