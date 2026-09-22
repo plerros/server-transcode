@@ -810,6 +810,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	ffmpeg_stats = Ffmpeg_stats().set(original)
 	ffmpeg_stats.run()
 	in_frames = ffmpeg_stats.frames()
+	in_resolution = ffmpeg_stats.resolution()
 	ffmpeg_stats = Ffmpeg_stats().set(op_destination)
 	ffmpeg_stats.run()
 	out_frames = ffmpeg_stats.frames()
@@ -825,6 +826,10 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 		return (float("+inf"), statistics)
 
 	# Metrics
+	total = 0
+	results = []
+
+	total += 1
 	ffmpeg_psnr = Ffmpeg_psnr().set(op_source, op_destination)
 	ffmpeg_psnr.run()
 	psnr = [ffmpeg_psnr.psnr(), CONFIG.PSNR]
@@ -832,7 +837,9 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	if (psnr[0] < psnr[1].get_min(hq)):
 		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
+	results += [psnr]
 
+	total += 1
 	ffmpeg_ssim = Ffmpeg_ssim().set(op_source, op_destination)
 	ffmpeg_ssim.run()
 	ssim_db = [ffmpeg_ssim.ssim_db(), CONFIG.SSIM_DB]
@@ -841,25 +848,29 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
 
-	ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
-	ffmpeg_vmaf.run()
-	psnr_hvs_cb = [ffmpeg_vmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
-	vmaf_db     = [ffmpeg_vmaf.vmaf_db(),     CONFIG.VMAF_DB]
-	statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
-	if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
-		statistics["y"] = float("-inf")
-		return (float("-inf"), statistics)
-	statistics["vmaf_db"] = round(vmaf_db[0], 2)
-	if (vmaf_db[0] < vmaf_db[1].get_min(hq)):
-		statistics["y"] = float("-inf")
-		return (float("-inf"), statistics)
+	total += 2
+	if in_resolution[0] >= 320 and in_resolution[1] >= 176:
+		ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
+		ffmpeg_vmaf.run()
+		psnr_hvs_cb = [ffmpeg_vmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
+		vmaf_db     = [ffmpeg_vmaf.vmaf_db(),     CONFIG.VMAF_DB]
+		statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
+		if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
+			statistics["y"] = float("-inf")
+			return (float("-inf"), statistics)
+		statistics["vmaf_db"] = round(vmaf_db[0], 2)
+		if (vmaf_db[0] < vmaf_db[1].get_min(hq)):
+			statistics["y"] = float("-inf")
+			return (float("-inf"), statistics)
+		results += [psnr_hvs_cb]
+		results += [vmaf_db]
 
 	y = []
-	#for value, metric in [psnr, ssim_db, psnr_hvs_cb, vmaf_db]:
-	for value, metric in [vmaf_db]:
-		if (metric.contribution == 0):
+	for value, metric in results:
+		contribution = metric.contribution + (len(results) - total) / len(results)
+		if (contribution == 0):
 			continue
-		final = (value - metric.get_target(hq)) * metric.contribution
+		final = (value - metric.get_target(hq)) * contribution
 		y += [final]
 
 	statistics["y"] = sum(y) / len(y)
