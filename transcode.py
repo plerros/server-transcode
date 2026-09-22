@@ -739,6 +739,7 @@ class Optipng(Command):
 
 def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=False):
 	statistics = {}
+	statistics["y"]       = None
 	statistics["psnr"]    = None
 	statistics["ssim_db"] = None
 	statistics["psnr_hvs_cb"] = None
@@ -773,6 +774,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	psnr = [ffmpeg_psnr.psnr(), CONFIG.PSNR]
 	statistics["psnr"] = round(psnr[0], 2)
 	if (psnr[0] < psnr[1].get_min(hq)):
+		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
 
 	ffmpeg_ssim = Ffmpeg_ssim().set(op_source, op_destination)
@@ -780,6 +782,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	ssim_db = [ffmpeg_ssim.ssim_db(), CONFIG.SSIM_DB]
 	statistics["ssim_db"] = round(ssim_db[0], 2)
 	if (ssim_db[0] < ssim_db[1].get_min(hq)):
+		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
 
 	ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
@@ -788,9 +791,11 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	vmaf_db     = [ffmpeg_vmaf.vmaf_db(),     CONFIG.VMAF_DB]
 	statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
 	if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
+		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
 	statistics["vmaf_db"] = round(vmaf_db[0], 2)
 	if (vmaf_db[0] < vmaf_db[1].get_min(hq)):
+		statistics["y"] = float("-inf")
 		return (float("-inf"), statistics)
 
 	y = []
@@ -801,6 +806,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 		final = (value - metric.get_target(hq)) * metric.contribution
 		y += [final]
 
+	statistics["y"] = sum(y) / len(y)
 	return (sum(y) / len(y), statistics)
 
 class Cache:
@@ -928,9 +934,7 @@ class Brentq_scalar(Operation):
 
 		write_binary_file(self.op_destination, best.outBytes)
 
-		statistics = {}
-		statistics["y"] = best.y
-		statistics |= best.statistics
+		statistics = best.statistics
 		csv_line = []
 		for i in statistics:
 			csv_line += [statistics[i]]
