@@ -208,7 +208,7 @@ class Command_Cache():
 		self.cache: dict[str, object] = {}
 	def put(self, string, value):
 		with lock_cmd_cache:
-			if (len(self.cache) > CONFIG.CMD_CACHE):
+			if (len(self.cache) > PLATFORM.CMD_CACHE):
 				self.cache.pop(next(iter(self.cache)))
 		self.cache[string] = value
 	def get(self, string):
@@ -337,7 +337,7 @@ class Command():
 
 class Avifenc(Command):
 	def __init__(self):
-		super().__init__(CONFIG.BIN_AVIFENC)
+		super().__init__(PLATFORM.BIN_AVIFENC)
 	def set(self, source: Path, destination: Path, yuv, q):
 		super().set(["-j", "1", "--yuv", yuv, "-q", q, "--speed", "0", "--codec", "aom", source, destination])
 		return self
@@ -364,7 +364,7 @@ class Exiftool_orientation(Command):
 
 class Ffmpeg(Command):
 	def __init__(self):
-		super().__init__(CONFIG.BIN_FFMPEG)
+		super().__init__(PLATFORM.BIN_FFMPEG)
 
 	def set(self, ffmpeg_args, cacheable=False):
 		args = []
@@ -377,7 +377,7 @@ class Ffmpeg(Command):
 			args += ["run", "--rm"]
 			args += ["--device", "/dev/dri/renderD128"]
 			args += permissions
-			args += [CONFIG.DOCKER_FFMPEG, "-stats"]
+			args += [PLATFORM.DOCKER_FFMPEG, "-stats"]
 
 		args += ffmpeg_args
 		super().set(args, cacheable)
@@ -1126,8 +1126,8 @@ class To_vaav1(Brentq_scalar):
 		resolution = ffmpeg_stats.resolution()
 
 		resmod = []
-		resmod += [resolution[0] % CONFIG.VAAV1_RESMOD_HORIZONTAL]
-		resmod += [resolution[1] % CONFIG.VAAV1_RESMOD_VERTICAL]
+		resmod += [resolution[0] % PLATFORM.VAAV1_RESMOD_HORIZONTAL]
+		resmod += [resolution[1] % PLATFORM.VAAV1_RESMOD_VERTICAL]
 		op_resolution = []
 
 		for i in [0,1]:
@@ -1293,7 +1293,7 @@ class File(In_types):
 		# Basic checks
 		if (not path.is_file()):
 			return False
-		if (path.stat().st_size > CONFIG.MAX_FILE_BYTES):
+		if (path.stat().st_size > PLATFORM.MAX_FILE_BYTES):
 			return False
 	
 		self.path = Path(self.tempdir.name) / path.name
@@ -1530,7 +1530,7 @@ if __name__ == "__main__":
 	for i in [USER_PRIVATE, IN_FOLDER, IN_MEDIA, STATS_CSV, LOCAL_TMP]:
 		os.makedirs(i, exist_ok=True)
 
-	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(CONFIG.THREADS)]
+	processes = [multiprocessing.Process(target=multiplexer, args=(lock_folder, lock_media)) for i in range(PLATFORM.THREADS)]
 
 	if (check_environment(args)):
 		for p in processes:

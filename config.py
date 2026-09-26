@@ -1,5 +1,3 @@
-import os
-
 class metric():
 	def __init__(self, default, hq, contribution, power_mean):
 		self.default      = default
@@ -18,17 +16,8 @@ class target_t(metric):
 		super().__init__([target-0.1, target, target+5.0], [target_hq-0.1, target_hq, target_hq+5.0], contribution, power_mean)
 
 class CONFIG:
-	BIN_AVIFENC    = "bin/libavif/1.4.2/avifenc"
-	BIN_FFMPEG     = "podman"
-	DOCKER_FFMPEG  = "linuxserver/ffmpeg:8.0.1"
-	MAX_FILE_BYTES = 1024 * 1048576 # 10 MB
-
-	THREADS        = os.cpu_count()
-	CMD_CACHE      = THREADS * 100
-
 	# Keep the original file if (out_bytes / in_bytes) >= COMPRESSION_RATIO_THRESHOLD
 	COMPRESSION_RATIO_THRESHOLD = 0.8
-
 
 	# All filters operate by computing a mean of all channels (RGB / etc)
 	# The per-frame means are then averaged using power mean
@@ -38,11 +27,6 @@ class CONFIG:
 	PSNR_HVS_CB = filter_t(49.87, 55.12)
 	# Targets allow for values near them
 	VMAF_DB     = target_t(12.91, 15.25)
-
-	# VAAV1_RESOLUTION_MODULO:
-	# If hardware only supports multiples of VAAV1_RESOLUTION_MODULO
-	VAAV1_RESMOD_HORIZONTAL = 16
-	VAAV1_RESMOD_VERTICAL   = 16
 
 	# VAAV1_CROP_PIXELS
 	# If unsupported resolution, crop up to VAAV1_CROP_PIXELS
