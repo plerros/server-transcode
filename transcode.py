@@ -750,19 +750,16 @@ class Ffmpeg_libvmaf(Ffmpeg):
 			for row in reader:
 				data += [float(row["psnr_hvs_cb"])]
 		return pmean(data, CONFIG.PSNR_HVS_CB.power_mean)
-	def vmaf(self):
+	def vmaf_db(self):
 		data = []
 		with open(self.csv, newline="") as f:
 			reader = csv.DictReader(f)
 			for row in reader:
-				data += [float(row["vmaf"])]
+				tmp = 1.0 - (float(row["vmaf"]) / 100.0)
+				tmp = max(tmp, sys.float_info.min)
+				tmp = min(tmp, 1.0)
+				data += [-10.0 * math.log10(tmp)]
 		return pmean(data, CONFIG.VMAF_DB.power_mean)
-		
-	def vmaf_db(self):
-		tmp = 1.0 - (self.vmaf() / 100.0)
-		if (tmp == 0.0):
-			tmp = sys.float_info.min
-		return (-10.0 * math.log(tmp) / math.log(10.0))
 	def check_exec_args(self):
 		ret = ""
 		if (not Ffmpeg_random().works()):
