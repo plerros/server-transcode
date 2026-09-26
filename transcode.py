@@ -603,10 +603,10 @@ class Ffmpeg_stats(Ffmpeg):
 	def channels_gray(self):
 		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
 		gray_re = grep(r'gray16', tmp_re)
-		if (len(gray) != 0):
+		if (len(gray_re) != 0):
 			return (16, "mono")
 		gray_re = grep(r'gray', tmp_re)
-		if (len(gray) != 0):
+		if (len(gray_re) != 0):
 			return (8, "mono")
 		return (None, None)
 	def channels_RGB(self):
