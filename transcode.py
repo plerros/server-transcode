@@ -577,35 +577,58 @@ class Ffmpeg_stats(Ffmpeg):
 		return [int(width), int(height)]
 	def bits(self):
 		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
-
-		# yuv
-		yuv_re = grep(r'yuv444p12', tmp_re) + grep(r'yuv422p12', tmp_re) + grep(r'yuv420p12', tmp_re)
-		if (len(yuv_re) != 0):
-			return 12
-		yuv_re = grep(r'yuv422p10', tmp_re) + grep(r'yuv422p10', tmp_re) + grep(r'yuv420p10', tmp_re)
-		if (len(yuv_re) != 0):
-			return 10
-		yuv_re = grep(r'yuv444p', tmp_re)   + grep(r'yuv422p', tmp_re)   + grep(r'yuv420p',   tmp_re)
-		if (len(yuv_re) != 0):
-			return 8
-
-		# rgb
-		rgb_re = grep(r'rgb48', tmp_re) + grep(r'rgba64', tmp_re)
-		if (len(rgb_re) != 0):
-			return 16
-		rgb_re = grep(r'rgb24', tmp_re) + grep(r'rgba32', tmp_re)
-		if (len(rgb_re) != 0):
-			return 8
-
-		# gbr
+		gbr, _ = self.channels_GBR()
+		if gbr
+			return gbr
+		gray, _ = self.channels_gray()
+		if gray
+			return gray
+		rgb, _ = self.channels_RGB()
+		if rgb
+			return rgb
+		yuv, _ = self.channels_YUV()
+		if yuv
+			return yuv
+		return None
+	def channels_GBR(self):
+		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
 		gbr_re = grep(r'gbrapf16', tmp_re)
 		if (len(gbr_re) != 0):
-			return 32
+			return (32, "full")
 		gbr_re = grep(r'gbrpf32', tmp_re)
 		if (len(gbr_re) != 0):
-			return 16
-
-		return None
+			return (16, "full")
+		return (None, None)
+	def channels_gray(self):
+		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
+		gray_re = grep(r'gray16', tmp_re)
+		if (len(gray) != 0):
+			return (16, "mono")
+		gray_re = grep(r'gray', tmp_re)
+		if (len(gray) != 0):
+			return (8, "mono")
+		return (None, None)
+	def channels_RGB(self):
+		tmp_re = grep(r'Stream.*Video.*', self.stderr)
+		rgb_re = grep(r'rgb48', tmp_re) + grep(r'rgba64', tmp_re)
+		if (len(rgb_re) != 0):
+			return (16, "full")
+		rgb_re = grep(r'rgb24', tmp_re) + grep(r'rgba32', tmp_re)
+		if (len(rgb_re) != 0):
+			return (8, "full")
+		return (None, None)
+	def channels_YUV(self):
+		tmp_re = grep(r'Stream.*Video.*', self.stderr)
+		yuv_re = grep(r'yuv444p12', tmp_re) + grep(r'yuv422p12', tmp_re) + grep(r'yuv420p12', tmp_re)
+		if (len(yuv_re) != 0):
+			return (12, grep(r'4[0-4][0-4]'))
+		yuv_re = grep(r'yuv422p10', tmp_re) + grep(r'yuv422p10', tmp_re) + grep(r'yuv420p10', tmp_re)
+		if (len(yuv_re) != 0):
+			return (10, grep(r'4[0-4][0-4]'))
+		yuv_re = grep(r'yuv444p', tmp_re)   + grep(r'yuv422p', tmp_re)   + grep(r'yuv420p',   tmp_re)
+		if (len(yuv_re) != 0):
+			return (8, grep(r'4[0-4][0-4]'))
+		return (None, None)
 	def timebase(self):
 		tmp_re     = grep(r'Stream.*Video.*',                 self.stderr)
 		tmp_re     = grep(r'[1-9][0-9]*\.?[0-9]*[kmbt]? tbn', tmp_re)
@@ -1043,7 +1066,28 @@ class To_avif(Brentq_scalar):
 	def brentq(self):
 		# brentq
 		failures = 0
-		for i in ["444", "422", "420"]:
+		ffmpeg_stats = Ffmpeg_stats().set(self.op_source)
+		ffmpeg_stats.run()
+		_, src_gbr  = ffmpeg_stats.channels_GBR()
+		_, src_gray = ffmpeg_stats.channels_gray()
+		_, src_rgb  = ffmpeg_stats.channels_RGB()
+		_, src_yuv  = ffmpeg_stats.channels_YUV()
+
+		dst_yuvs = []
+
+		# Grayscale
+		if src_yuv == "400" or src_gray:
+			dst_yuvs += ["400"]
+
+		# Color		
+		if src_yuv == "444" or src_rgb or src_gbr:
+			dst_yuvs += ["444", "422", "420"]
+		if src_yuv == "422":
+			dst_yuvs += ["422", "420"]
+		if src_yuv == "420":
+			dst_yuvs += ["420"]
+
+		for i in set(dst_yuvs):
 			self.encode_yuv = i
 			append_line(self.op_info, strings=["YUV ", i])
 
