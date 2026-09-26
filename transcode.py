@@ -18,7 +18,8 @@ import tempfile
 import time
 import traceback
 
-from config import CONFIG
+from config          import CONFIG
+from config_platform import PLATFORM
 
 ROOT         = Path("root")
 USER_PRIVATE = ROOT / "in/user_private"
@@ -208,7 +209,7 @@ class Command_Cache():
 		self.cache: dict[str, object] = {}
 	def put(self, string, value):
 		with lock_cmd_cache:
-			if (len(self.cache) > PLATFORM.CMD_CACHE):
+			if (len(self.cache) > PLATFORM.CMD_CACHE_ENTRIES):
 				self.cache.pop(next(iter(self.cache)))
 		self.cache[string] = value
 	def get(self, string):
@@ -578,16 +579,16 @@ class Ffmpeg_stats(Ffmpeg):
 	def bits(self):
 		tmp_re  = grep(r'Stream.*Video.*', self.stderr)
 		gbr, _ = self.channels_GBR()
-		if gbr
+		if gbr:
 			return gbr
 		gray, _ = self.channels_gray()
-		if gray
+		if gray:
 			return gray
 		rgb, _ = self.channels_RGB()
-		if rgb
+		if rgb:
 			return rgb
 		yuv, _ = self.channels_YUV()
-		if yuv
+		if yuv:
 			return yuv
 		return None
 	def channels_GBR(self):
