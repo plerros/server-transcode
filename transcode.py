@@ -399,9 +399,9 @@ class Ffmpeg_aomav1(Ffmpeg):
 		if (not Ffmpeg_ssim().works()):
 			functional.set(self, False)
 			ret +=  Ffmpeg_ssim().works_str()
-		if (not Ffmpeg_vmaf().works()):
+		if (not Ffmpeg_libvmaf().works()):
 			functional.set(self, False)
-			ret += Ffmpeg_vmaf().works_str()
+			ret += Ffmpeg_libvmaf().works_str()
 		return ret
 
 class Ffmpeg_crop(Ffmpeg):
@@ -662,9 +662,9 @@ class Ffmpeg_vaav1(Ffmpeg):
 		if (not Ffmpeg_psnr().works()):
 			functional.set(self, False)
 			ret += Ffmpeg_psnr().works_str()
-		if (not Ffmpeg_vmaf().works()):
+		if (not Ffmpeg_libvmaf().works()):
 			functional.set(self, False)
-			ret += Ffmpeg_vmaf().works_str()
+			ret += Ffmpeg_libvmaf().works_str()
 		return ret
 	def check_exec_args(self):
 		ret = ""
@@ -687,7 +687,7 @@ class Ffmpeg_vaav1(Ffmpeg):
 			msg_info.print(self.execName + " -vaapi_device /dev/dri/renderD128 -vf format=nv12,hwupload -c:v av1_vaapi OK")
 		return ret
 
-class Ffmpeg_vmaf(Ffmpeg):
+class Ffmpeg_libvmaf(Ffmpeg):
 	def set(self, original: Path, transcoded: Path):
 		ffmpeg_stats = Ffmpeg_stats().set(original)
 		ffmpeg_stats.run()
@@ -850,10 +850,10 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 
 	total += 2
 	if in_resolution[0] >= 320 and in_resolution[1] >= 176:
-		ffmpeg_vmaf = Ffmpeg_vmaf().set(op_source, op_destination)
-		ffmpeg_vmaf.run()
-		psnr_hvs_cb = [ffmpeg_vmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
-		vmaf_db     = [ffmpeg_vmaf.vmaf_db(),     CONFIG.VMAF_DB]
+		ffmpeg_libvmaf = Ffmpeg_libvmaf().set(op_source, op_destination)
+		ffmpeg_libvmaf.run()
+		psnr_hvs_cb = [ffmpeg_libvmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
+		vmaf_db     = [ffmpeg_libvmaf.vmaf_db(),     CONFIG.VMAF_DB]
 		statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
 		if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
 			statistics["y"] = float("-inf")
@@ -1108,7 +1108,7 @@ class To_avif(Brentq_scalar):
 
 class To_vaav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
-		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_vaav1.csv", 1, 255)
+		super().__init__([Ffmpeg_vaav1, Ffmpeg_psnr, Ffmpeg_libvmaf], path, outdir, STATS_CSV / "to_vaav1.csv", 1, 255)
 
 		self.hq = hq
 		self.stat_cropped = False
@@ -1172,7 +1172,7 @@ class To_vaav1(Brentq_scalar):
 
 class To_aomav1(Brentq_scalar):
 	def __init__(self, path: Path, outdir: Path, hq: bool):
-		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_vmaf], path, outdir, STATS_CSV / "to_aomav1.csv", 1, 63)
+		super().__init__([Ffmpeg_aomav1, Ffmpeg_psnr, Ffmpeg_libvmaf], path, outdir, STATS_CSV / "to_aomav1.csv", 1, 63)
 
 		self.hq = hq
 	def outSuffix(self, path):
