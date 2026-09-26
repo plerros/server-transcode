@@ -843,6 +843,7 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 
 	# File size filter
 	if ((out_bytes / in_bytes > CONFIG.COMPRESSION_RATIO_THRESHOLD) or (out_frames < in_frames)):
+		statistics["y"] = float("+inf")
 		return (float("+inf"), statistics)
 
 	# Metrics
