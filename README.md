@@ -19,8 +19,8 @@ Compress images, videos and folders.
 
 3. Cut-paste / Move
 
-    - folder `mv root/media/user_private/[...] root/in/**folder**/[...]`
-    - image/video `mv root/media/user_private/[...] root/in/**media**/[...]`
+    - folder `mv root/media/user_private/[...] root/in/folder/[...]`
+    - image/video `mv root/media/user_private/[...] root/in/media/[...]`
 
     ⚠️ **WARNING:** Make sure Linux is performing an atomic 'rename' operation:
     | Operation | Is it safe? |
