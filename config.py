@@ -22,11 +22,12 @@ class CONFIG:
 	# All filters operate by computing a mean of all channels (RGB / etc)
 	# The per-frame means are then averaged using power mean
 	# Filters are cutoff values. Meet or beat to pass.
-	PSNR        = filter_t(50.33, 50.33)
-	SSIM_DB     = filter_t(21.27, 30.95)
-	PSNR_HVS_CB = filter_t(49.87, 55.12)
+	PSNR        = filter_t(39.44, 50.33)
+	SSIM_DB     = filter_t(19.51, 20.69)
+	CAMBI_DB    = filter_t( 5.41,  5.95)
+	PSNR_HVS_CB = filter_t(41.49, 53.07)
 	# Targets allow for values near them
-	VMAF_DB     = target_t(12.91, 15.25)
+	VMAF_DB     = target_t(12.92, 15.25)
 
 	# VAAV1_CROP_PIXELS
 	# If unsupported resolution, crop up to VAAV1_CROP_PIXELS

@@ -744,6 +744,16 @@ class Ffmpeg_libvmaf(Ffmpeg):
 		result = super().run()
 		self.stderr = result.stderr.decode('utf-8')
 		return result
+	def cambi_db(self):
+		data = []
+		with open(self.csv, newline="") as f:
+			reader = csv.DictReader(f)
+			for row in reader:
+				tmp = (float(row["cambi"]) / 24)
+				tmp = max(tmp, sys.float_info.min)
+				tmp = min(tmp, 1.0)
+				data += [-10.0 * math.log10(tmp)]
+		return pmean(data, CONFIG.CAMBI_DB.power_mean)
 	def psnr_hvs_cb(self):
 		data = []
 		with open(self.csv, newline="") as f:
@@ -816,11 +826,12 @@ class Optipng(Command):
 
 def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=False):
 	statistics = {}
-	statistics["y"]       = None
-	statistics["psnr"]    = None
-	statistics["ssim_db"] = None
+	statistics["y"]           = None
+	statistics["psnr"]        = None
+	statistics["ssim_db"]     = None
+	statistics["cambi_db"]    = None
 	statistics["psnr_hvs_cb"] = None
-	statistics["vmaf_db"] = None
+	statistics["vmaf_db"]     = None
 
 	# Filesize filter
 	# If we're not saving drive space, keep the original
@@ -874,8 +885,13 @@ def evaluate_image(original: Path, op_source: Path, op_destination: Path, hq=Fal
 	if in_resolution[0] >= 320 and in_resolution[1] >= 176:
 		ffmpeg_libvmaf = Ffmpeg_libvmaf().set(op_source, op_destination)
 		ffmpeg_libvmaf.run()
+		cambi_db    = [ffmpeg_libvmaf.cambi_db(),    CONFIG.CAMBI_DB]
 		psnr_hvs_cb = [ffmpeg_libvmaf.psnr_hvs_cb(), CONFIG.PSNR_HVS_CB]
 		vmaf_db     = [ffmpeg_libvmaf.vmaf_db(),     CONFIG.VMAF_DB]
+		statistics["cambi_db"] = round(cambi_db[0], 2)
+		if (cambi_db[0] < cambi_db[1].get_min(hq)):
+			statistics["y"] = float("-inf")
+			return (float("-inf"), statistics)
 		statistics["psnr_hvs_cb"] = round(psnr_hvs_cb[0], 2)
 		if (psnr_hvs_cb[0] < psnr_hvs_cb[1].get_min(hq)):
 			statistics["y"] = float("-inf")
