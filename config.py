@@ -32,3 +32,4 @@ class CONFIG:
 	# VAAV1_CROP_PIXELS
 	# If unsupported resolution, crop up to VAAV1_CROP_PIXELS
 	VAAV1_CROP_PIXELS = 2
+	VAAV1_PAD_PIXELS  = 8

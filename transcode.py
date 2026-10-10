@@ -406,18 +406,18 @@ class Ffmpeg_aomav1(Ffmpeg):
 		return ret
 
 class Ffmpeg_crop(Ffmpeg):
-	def set(self, source: Path, destination: Path, dst_resolution):
+	def set(self, source: Path, destination: Path, horizontal=0, vertical=0):
+		horizontal=int(horizontal)
+		vertical=int(vertical)
+		if (horizontal % 2 != 0):
+			raise ValueError
+		if (vertical % 2 != 0):
+			raise ValueError
+
 		ffmpeg_stats = Ffmpeg_stats().set(source)
 		ffmpeg_stats.run()
 		resolution = ffmpeg_stats.resolution()
-
-		offset = [0, 0]
-		for i in [0, 1]:
-			if (dst_resolution[i] > resolution[i]):
-				dst_resolution[i] = resolution[i]
-			offset[i] = int((resolution[i] - dst_resolution[i]) / 2)
-
-		super().set(["-i", source, "-vf", "crop="+str(dst_resolution[0])+":"+str(dst_resolution[1])+":"+str(offset[0])+":"+str(offset[1]), destination])
+		super().set(["-i", source, "-vf", "crop="+str(resolution[0]-horizontal)+":"+str(resolution[1]-vertical)+":"+str(int(horizontal/2))+":"+str(int(vertical/2)), destination])
 		return self
 
 	def check_exec_args(self):
@@ -436,16 +436,68 @@ class Ffmpeg_crop(Ffmpeg):
 		random_in  = Path(tempdir.name) / "random.mp4"
 		random_out = Path(tempdir.name) / "random2.mp4"
 		Ffmpeg_random().set(random_in).run()
-		self.set(random_in, random_out, [1918, 1078])
+		ffmpeg_stats = Ffmpeg_stats().set(random_in)
+		ffmpeg_stats.run()
+		in_resolution = ffmpeg_stats.resolution()
+
+		self.set(random_in, random_out, horizontal=CONFIG.VAAV1_CROP_PIXELS, vertical=CONFIG.VAAV1_CROP_PIXELS)
 		self.run()
 
 		ffmpeg_stats = Ffmpeg_stats().set(random_out)
 		ffmpeg_stats.run()
-		resolution = ffmpeg_stats.resolution()
+		out_resolution = ffmpeg_stats.resolution()
 
-		if (resolution != [1918, 1078]):
+		if ((in_resolution[0] - out_resolution[0] != CONFIG.VAAV1_CROP_PIXELS) or (in_resolution[1] - out_resolution[1] != CONFIG.VAAV1_CROP_PIXELS)):
 			functional.set(self, False)
-			msg_error.print("Ffmpeg_crop() failed self-test" + str(resolution))
+			msg_error.print("Ffmpeg_crop() failed self-test" + str(in_resolution))
+		else:
+			msg_info.print(self.execName + " -vf crop OK")
+		return ret
+
+class Ffmpeg_pad(Ffmpeg):
+	def set(self, source: Path, destination: Path, horizontal=0, vertical=0):
+		horizontal=int(horizontal)
+		vertical=int(vertical)
+		if (horizontal % 2 != 0):
+			raise ValueError
+		if (vertical % 2 != 0):
+			raise ValueError
+		ffmpeg_stats = Ffmpeg_stats().set(source)
+		ffmpeg_stats.run()
+		resolution = ffmpeg_stats.resolution()
+		super().set(["-i", source, "-vf", "pad="+str(resolution[0]+horizontal)+":"+str(resolution[1]+vertical)+":"+str(-int(horizontal/2))+":"+str(-int(vertical/2)), destination])
+		return self
+
+	def check_exec_args(self):
+		ret = ""
+		if (not Ffmpeg_random().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_random().works_str()
+			return ret
+
+		if (not Ffmpeg_stats().works()):
+			functional.set(self, False)
+			ret += Ffmpeg_stats().works_str()
+			return ret
+
+		tempdir = tempfile.TemporaryDirectory(dir=LOCAL_TMP)
+		random_in  = Path(tempdir.name) / "random.mp4"
+		random_out = Path(tempdir.name) / "random2.mp4"
+		Ffmpeg_random().set(random_in).run()
+
+		ffmpeg_stats = Ffmpeg_stats().set(random_in)
+		ffmpeg_stats.run()
+		in_resolution = ffmpeg_stats.resolution()
+
+		self.set(random_in, random_out, horizontal=CONFIG.VAAV1_PAD_PIXELS, vertical=CONFIG.VAAV1_PAD_PIXELS)
+		self.run()
+		ffmpeg_stats = Ffmpeg_stats().set(random_out)
+		ffmpeg_stats.run()
+		out_resolution = ffmpeg_stats.resolution()
+
+		if ((out_resolution[0] - in_resolution[0] != CONFIG.VAAV1_PAD_PIXELS) or (out_resolution[1] - in_resolution[1] != CONFIG.VAAV1_PAD_PIXELS)):
+			functional.set(self, False)
+			msg_error.print("Ffmpeg_pad() failed self-test" + str(in_resolution))
 		else:
 			msg_info.print(self.execName + " -vf crop OK")
 		return ret
@@ -811,6 +863,27 @@ class Magick_mogrify_autoorient(Command):
 		super().__init__("magick")
 	def set(self, path:Path):
 		super().set(["mogrify", "-auto-orient", path])
+		return self
+
+class Mkvpropedit_crop(Command):
+	def __init__(self):
+		super().__init__("mkvpropedit")
+	def set(self, path:Path, horizontal=0, vertical=0):
+		horizontal=int(horizontal)
+		vertical=int(vertical)
+		if (horizontal % 2 != 0):
+			raise ValueError
+		if (vertical % 2 != 0):
+			raise ValueError
+		
+		args = [
+			path, "--edit", "track:v1",
+			"-s", "pixel-crop-left="   + str(int(vertical/2)),
+			"-s", "pixel-crop-right="  + str(int(vertical/2)),
+			"-s", "pixel-crop-bottom=" + str(int(horizontal/2)),
+			"-s", "pixel-crop-top="    + str(int(horizontal/2))
+		]
+		super().set(args)
 		return self
 
 class Optipng(Command):
@@ -1179,28 +1252,57 @@ class To_vaav1(Brentq_scalar):
 	def logSuffix(self, path):
 		return path.with_suffix(".vaav1.log")
 	def preRun(self):
-		# test for gpu support
+		# TODO test for gpu support
+
+		ffmpeg_stats = Ffmpeg_stats().set(self.op_source)
+		ffmpeg_stats.run()
+		resolution = ffmpeg_stats.resolution()
+		mod  = [PLATFORM.VAAV1_RESMOD_HORIZONTAL, PLATFORM.VAAV1_RESMOD_VERTICAL]
+		crop = [0,0]
+		pad  = [0,0]
+		for i in [0,1]:
+			crop[i] = resolution[i] % mod[i]
+			if (crop[i] > CONFIG.VAAV1_CROP_PIXELS):
+				crop[i] = 0
+			
+			pad[i] = mod[i] - (resolution[i] % mod[i])
+			if (pad[i] > CONFIG.VAAV1_PAD_PIXELS):
+				pad[i] = 0
+
+			if (crop[i] == 0):
+				continue
+			if (pad[i] == 0):
+				continue
+
+			if (crop[i] < pad[i]):
+				pad[i] = 0
+			else:
+				crop[i] = 0
+
+		if (crop[0] or crop[1]):
+			cropped_path = self.op_source.with_suffix(".croppped" + self.path.suffix)
+			ffmpeg_crop = Ffmpeg_crop().set(self.op_source, cropped_path, horizontal=crop[0], vertical=crop[1])
+			ffmpeg_crop.run()
+			self.op_source    = cropped_path
+			self.stat_cropped = True
+
+		if (pad[0] or pad[1]):
+			# ensure container is MKV, so that we can use metadata to hide the padding
+			padded_path = self.op_source.with_suffix(".padded.mkv")
+			ffmpeg_pad = Ffmpeg_pad().set(self.op_source, padded_path, horizontal=pad[0], vertical=pad[1])
+			ffmpeg_pad.run()
+			mkvpropedit_crop = Mkvpropedit_crop().set(padded_path, horizontal=pad[0], vertical=pad[1])
+			mkvpropedit_crop.run()
+			self.op_source   = padded_path
+			self.stat_padded = True
+
 		ffmpeg_stats = Ffmpeg_stats().set(self.path)
 		ffmpeg_stats.run()
 		resolution = ffmpeg_stats.resolution()
-
-		resmod = []
-		resmod += [resolution[0] % PLATFORM.VAAV1_RESMOD_HORIZONTAL]
-		resmod += [resolution[1] % PLATFORM.VAAV1_RESMOD_VERTICAL]
-		op_resolution = []
-
-		for i in [0,1]:
-			if (resmod[i] > CONFIG.VAAV1_CROP_PIXELS):
-				return False
-			tmp = resolution[i] - (resmod[i])
-			op_resolution += [tmp]
-			if (tmp != resolution[i]):
-				self.stat_cropped = True
-
-		if (self.stat_cropped):
-			self.op_source = self.path.with_suffix(".croppped" + self.path.suffix)
-			ffmpeg_crop = Ffmpeg_crop().set(self.path, self.op_source, op_resolution)
-			ffmpeg_crop.run()
+		if (resolution[0] % PLATFORM.VAAV1_RESMOD_HORIZONTAL != 0):
+			return False
+		if (resolution[0] % PLATFORM.VAAV1_RESMOD_VERTICAL != 0):
+			return False
 		return True
 
 	def cache_index(self, q:int):
