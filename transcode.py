@@ -620,15 +620,15 @@ class Ffmpeg_stats(Ffmpeg):
 		return (None, None)
 	def channels_YUV(self):
 		tmp_re = grep(r'Stream.*Video.*', self.stderr)
-		yuv_re = grep(r'yuv444p12', tmp_re) + grep(r'yuv422p12', tmp_re) + grep(r'yuv420p12', tmp_re)
+		yuv_re = grep(r'yuv[a-zA-Z]*444p12', tmp_re) + grep(r'yuv[a-zA-Z]*422p12', tmp_re) + grep(r'yuv[a-zA-Z]*420p12', tmp_re)
 		if (len(yuv_re) != 0):
-			return (12, grep(r'4[0-4][0-4]'))
-		yuv_re = grep(r'yuv422p10', tmp_re) + grep(r'yuv422p10', tmp_re) + grep(r'yuv420p10', tmp_re)
+			return (12, grep(r'4[0-4][0-4]', yuv_re))
+		yuv_re = grep(r'yuv[a-zA-Z]*422p10', tmp_re) + grep(r'yuv[a-zA-Z]*422p10', tmp_re) + grep(r'yuv[a-zA-Z]*420p10', tmp_re)
 		if (len(yuv_re) != 0):
-			return (10, grep(r'4[0-4][0-4]'))
-		yuv_re = grep(r'yuv444p', tmp_re)   + grep(r'yuv422p', tmp_re)   + grep(r'yuv420p',   tmp_re)
+			return (10, grep(r'4[0-4][0-4]', yuv_re))
+		yuv_re = grep(r'yuv[a-zA-Z]*444p', tmp_re)   + grep(r'yuv[a-zA-Z]*422p', tmp_re)   + grep(r'yuv[a-zA-Z]*420p',   tmp_re)
 		if (len(yuv_re) != 0):
-			return (8, grep(r'4[0-4][0-4]'))
+			return (8, grep(r'4[0-4][0-4]', yuv_re))
 		return (None, None)
 	def timebase(self):
 		tmp_re     = grep(r'Stream.*Video.*',                 self.stderr)
